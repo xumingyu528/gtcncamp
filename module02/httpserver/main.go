@@ -51,7 +51,7 @@ func simpleServer(w http.ResponseWriter, req *http.Request) {
 	fmt.Printf("client info { IP: %s, HTTP_CODE: %d }\n", req.RemoteAddr, http_code)
 
 	//返回给client页面内容
-	fmt.Fprint(w, "hello")
+	fmt.Fprint(w, "hello \n")
 
 }
 
