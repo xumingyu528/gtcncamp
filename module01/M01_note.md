@@ -865,6 +865,7 @@ Go语言中的可变参数允许调用方法传递任意多个相同类型的参
 
 * 匿名函数
 
+  * 格式：`func (形参，可以不写){函数体}(实参，没有形参则不写)`
   * 不能独立存在
   * 可以赋值给其它变量
     * `x := func(){}`
@@ -1185,7 +1186,7 @@ Go语言中的可变参数允许调用方法传递任意多个相同类型的参
     }
     ```
 
-* json 包使用 `map[string]interfacd{}` 和 `[]interface{}` 类型保存任意对象
+* json 包使用 `map[string]interface{}` 和 `[]interface{}` 类型保存任意对象
 
 * 可通过如下逻辑解析任意 json
 
@@ -1206,9 +1207,6 @@ Go语言中的可变参数允许调用方法传递任意多个相同类型的参
     
     ```
 
-  * 
-
-​    
 
 
 
@@ -1216,7 +1214,134 @@ Go语言中的可变参数允许调用方法传递任意多个相同类型的参
 
 
 
-# 常用语法、多线程
+# 错误处理
+
+## error
+
+* Go语言无内置exception机制，只提供 error 接口供自定义错误
+
+  * ```go
+    type error interface {
+        Error() string
+    }
+    ```
+
+* 可通过 `errors.New` 或 `fmt.Errorf` 创建新的 error
+
+  * `var errNotFound error = errors.New("NotFound")`
+
+  * ```go
+    func main() {
+    	err := fmt.Errorf("this is an error")
+    	fmt.Println(err)
+    	err2 := errors.New("this is an error too")
+    	fmt.Println(err2)
+    }
+    ```
+
+* 通常应用程序对 error 的处理大部分是判断 error 是否为 nil
+
+  
+
+如需将 error 归类，通常交给应用程序自定义，比如 kubernetes 自定义了与 apiserver 交互的不同类型错误
+
+```go
+type StatusError struct {
+    ErrStatus metav1.Status
+}
+
+var _ error = &StatusError{}
+
+//Error implements the Error interface
+func (e *StatusError) Error() string {
+    return e.ErrStatus.Message
+}
+
+```
+
+
+
+
+
+## defer函数
+
+延迟执行，多条defer按照压栈的方式，先进后出顺序
+
+* `defer 执行语句`
+
+* 函数返回之前执行某个语句或函数
+
+  * 等同于Java和C#的finally
+
+* 常见的defer使用场景：**记得关闭你打开的资源**
+
+  * `defer file.Close()`
+  * `defer mu.Unlock()`
+  * `defer println("")`
+
+* 示例
+
+  * ```go
+    //定义一个循环函数
+    func loopFunc() {
+        lock := sync.Mutex{}	//定义一个同步锁
+        for i := 0; i<3 ; i++ {
+            //闭包的作用是函数结束时，让defer函数触发执行，否则会等到外层的loopFunc函数结束才会执行
+            go func(i int){
+                lock.Lock()	//执行某些操作前，加锁
+                defer lock.Unlock()	//函数结束时会执行解锁，释放资源
+                fmt.Println("loopFunc:", i)
+            }(i)
+        }
+    }
+    
+    func main(){
+        //使用defer，主程序结束时，会按照放入栈的顺序，依次取出执行
+        defer fmt.Println("1")
+        defer fmt.Println("2")
+        defer fmt.Println("3")
+        
+        loopFunc()
+        time.Sleep(time.Second)
+    }
+    
+    
+    /*
+    执行结果：
+    loopFunc: 0
+    loopFunc: 1
+    loopFunc: 2
+    3
+    2
+    1
+    */
+    
+    ```
+
+  
+
+
+
+
+
+## panic和recover函数
+
+* panic：可以在系统出现不可恢复错误时主动调用 panic，panic 会使当前线程直接 crash
+* defer：保证执行并把控制权交还给接收到 panic 的函数调用者
+* recover：函数从 panic 或错误场景中恢复
+
+
+
+```go
+defer func() {
+    fmt.Println("defer func is called")
+    if err := recover(); err != nil {
+        fmt.Println(err)
+    }
+}()
+
+panic("a panic is triggered")	//直接crash掉，后续的代码不会再执行，但此前定义的defer func()会执行
+```
 
 
 
@@ -1226,9 +1351,416 @@ Go语言中的可变参数允许调用方法传递任意多个相同类型的参
 
 
 
+# 多线程
+
+## 并发和并行
+
+* 并发（concurrency）
+  * 两个或多个事件在同一时间间隔发生
+  * 例如单个CPU分时间片，同一时间段内多个进程轮流执行
+* 并行（parallellism）
+  * 两个或者多个事件在同一时刻发生
+  * 例如多个CPU同时执行不同的进程
 
 
 
+## 协程 goroutine
+
+### 概念
+
+* 进程
+  * 分配系统资源（CPU时间、内存等）基本单位
+  * 有独立的内存空间，切换开销大
+* 线程：进程的一个执行流，是CPU调度并能独立运行的基本单位
+  * 同一进程中的多线程共享内存空间，线程切换代价小
+  * 多线程通信方便
+  * 从内核层面来看线程其实也是一种特殊的进程，它跟父进程共享了打开的文件和文件系统信息，共享了地址空间和信号处理函数
+* 协程
+  * Go语言中的轻量级线程实现
+  * 在用户态进行
+  * Golang 在runtime、系统调用等多方面对 goroutine 调度进行了封装和处理，当遇到长时间执行或者进行系统调用时，会主动把当前 goroutine 的CPU(P) 转让出去，让其它 goroutine 能被调度并执行，也就是 Golang 从语言层面支持了协程
+
+
+
+### CSP模型
+
+Communicating Sequential Process
+
+* CSP
+  * 描述两个独立的并发实体通过共享的通讯channel进行通信的并发模型
+* Go 协程 goroutine 
+  * 是一种轻量线程，它不是操作系统的线程，而是将一个操作系统线程分段使用，通过调度器实现协作式调度
+  * 是一种绿色线程，微线程，它与 Coroutine 协程也有区别，能够在发现堵塞后启动新的微线程
+* 通道 channel
+  *  类似 Unix 的 Pipe，用于协程之间通讯和同步。协程之间虽然解耦，但是它们和 Channel 有着耦合
+
+
+
+### 线程和协程的差异
+
+* 每个 goroutine（协程）默认占用内存比 Java、C 的线程少
+  * goroutine：2KB
+  * 线程：8MB
+* 线程 goroutine 切换开销方面，goroutine 远比线程小
+  * 线程：涉及模式切换（从用户态切换到内核态）、16个寄存器、PC、SP ... 等寄存器的刷新
+  * goroutine：只有三个寄存器的值修改 - PC / SP / DX
+* **GOMAXPROCS**
+  * 控制并行线程数量
+
+使用示例：
+
+```go
+//启动新协程，使用 go 关键字
+go fmt.Println("hello goroutine")	//启动一个新协程进行打印
+
+//单进程顺序执行每条语句
+func main(){
+    fmt.Println("1")
+    fmt.Println("2")
+    fmt.Println("3")
+    fmt.Println("4")
+    fmt.Println("5")
+}
+
+//使用协程分别执行每条语句
+func main(){
+    go fmt.Println("1")
+    go fmt.Println("2")
+    go fmt.Println("3")
+    go fmt.Println("4")
+    go fmt.Println("5")
+    
+    time.Sleep(time.Second)	//使主线程暂停一下
+}
+```
+
+
+
+## 通道 channel
+
+* Channel 是多个协程之间通讯的管道
+
+  * 一端发送数据，一端接收数据
+  * 同一时间只有一个协程可以访问数据，无共享内存模式可能出现的内存竞争
+  * 协调协程的执行顺序
+
+* 声明方式
+
+  * `var identifier chan datatype`
+  * 操作符 `<-`  
+
+* 示例
+
+  * ```go
+    ch := make(chan int)	//创建一个channel，存放int类型数据
+    go func(){
+        fmt.Println("hello from goroutine")
+        ch <- 0 //数据写入Channel
+    }()
+    i := <- ch	//从Channel中取数据并赋值
+    ```
+
+
+
+### 通道缓冲
+
+* 基于Channel 的通信是同步的
+
+* 当缓冲区满时，数据的发送是阻塞的
+
+* 通过 make 关键字创建通道时可以定义缓冲区容量，默认缓冲区容量为0
+
+* 示例
+
+  * ```go
+    ch := make(chan int)	//无缓冲区
+    ch := make(chan int, 10)	//缓冲区大小为10，当第通道中有10个数据，第11个数据进来会被阻塞
+    ```
+
+
+
+#### 遍历通道缓冲区
+
+```go
+ch := make(chan int, 10)	//创建一个通道，int类型，缓冲区大小10
+go func(){
+    for i := 0; i<10 ; i++{
+        //生成随机数放入通道
+        rand.Seed(time.Now().UnixNano())
+        n := rand.Intn(10)	// n will be between 0 and 10
+        fmt.Println("putting:",n)
+        ch <- n		//将n放入通道
+    }
+    close(ch)	//关闭通道
+}()
+fmt.Println("hello from main")
+//通过for循环，遍历ch通道取出值 赋值给v
+for v := range ch{
+    fmt.Println("receiving: ",v)
+}
+
+```
+
+
+
+
+
+### 单向通道
+
+* `chan`关键字在箭头`<-`前后分别代表仅接收与发送
+
+* 只发送通道
+
+  * `var sendOnly chan<- int`
+
+* 只接收通道
+
+  * `var readOnly <-chan int`
+
+* Istio webhook controller 中单向通道使用
+
+  * `func(w *WebhookCertPatcher) runWebhookController(stopChan <-chan struct{}) {}`
+
+* 使用示例
+
+  * ```go
+    var c = make(chan int)	//定义一个通道c
+    //分别执行生产和消费函数
+    go prod(c)
+    go consume(c)
+    
+    //生产者入参为只发送通道
+    func prod(ch chan<- int){
+        for {ch <- 1}
+    }
+    
+    //消费者入参为只接收通道
+    func consume(ch <-chan int){
+        for { <-ch}
+    }
+    ```
+
+    
+
+### 关闭通道
+
+* 通道无需每次关闭
+* 关闭的作用是告诉接收者该通道再无新数据发送
+* 只有发送方需要关闭通道
+
+```go
+ch := make(chan int)
+defer close(ch)	
+if v,notClosed := <-ch; notClosed {
+    fmt.Println(v)
+}
+```
+
+
+
+
+
+### 通道轮询 select
+
+* 当多个协程同时运行时，可通过select轮询多个通道
+
+  * 如果所有通道都阻塞等待，如定义了default 则执行 default
+  * 如多个通道就绪则随机选择
+
+* ```go
+  select {
+      case v:= <- ch1:
+      	...
+      case v:= <- ch2:
+      	...
+      default:
+      	...
+  }
+  ```
+
+
+
+
+
+### 定时器 Timer
+
+* time.Ticker 以指定的时间间隔重复的向通道 C 发送时间值
+
+* 使用场景
+
+  * 为协程设定超时时间
+
+  * ```go
+    timer := time.NewTimer(time.Second)	//设定定时器时间为1秒
+    select{
+        // check normal channel
+    	case <-ch:
+        	fmt.Println("received from ch")
+        case <-timer.C:		//如果 timer.C 通道中有数据，说明指定的时间到，执行下面的条件
+        	fmt.Println("timeout waiting from channel ch")
+    }
+    ```
+
+
+
+
+
+
+### 上下文 Context
+
+* 超时、取消操作或者一些异常情况，往往需要进行抢占操作或者中断后续操作
+
+* Context 是设置截止日期、同步信号，传递请求相关值的结构体
+
+  * ```go
+    type Context interface{
+        Deadline() (deadline time.Time, ok bool)
+        Done() <-chan struct{}
+        Err() error
+        Value(key interface{}) interface{}
+    }
+    ```
+
+* 用法
+
+  * `context.Background`
+    * Background 通常被用于主函数、初始化以及测试中，作为一个顶层的 context，也就是说一般我们创建的 context 都是基于 Background
+  * `context.TODO`
+    * TODO 是不确定是用什么 context 的时候才会使用
+  * `context.WithDeadline`
+    * 超时时间
+  * `context.WithValue`
+    * 向 context 添加键值对
+  * `context.WithCancel`
+    * 创建一个可取消的 context
+
+示例：
+
+```go
+func main() {
+	baseCtx := context.Background()             //创建一个context.Background上下文变量
+	ctx := context.WithValue(baseCtx, "a", "b") //创建一个context，添加键值对，a:b
+	go func(c context.Context) {
+		fmt.Println(c.Value("a")) //c.Value(key_name)可以获取context中的值
+	}(ctx) //启动一个协程，将ctx传递进去
+	timeoutCtx, cancel := context.WithTimeout(baseCtx, 2*time.Second) //设定超时时间为2秒
+	defer cancel()
+
+	go func(ctx context.Context) {
+		ticker := time.NewTicker(1 * time.Second) //创建定时器，时间间隔为1秒
+		for _ = range ticker.C {                  //遍历定时器通道，会按照定时器设定每秒循环一次
+			select {
+			case <-ctx.Done(): //ctx.Done()的通道中接收到信息，则执行退出
+				fmt.Println("child process interrupt...")
+				return
+			default:
+				fmt.Println("enter default")
+			}
+		}
+	}(timeoutCtx)
+	time.Sleep(1 * time.Second) //主线程休息1秒，观察上面事件
+
+	select {
+	case <-timeoutCtx.Done():	//main函数接收到timeoutCtx.Done()通道中有消息时，退出运行
+		time.Sleep(1 * time.Second)
+		fmt.Println("main process exit!")
+	}
+}
+
+/*
+执行结果：
+b
+enter default
+child process interrupt...
+main process exit!
+*/
+```
+
+生产者消费者示例：
+
+```go
+func main() {
+	messages := make(chan int, 10) //定义一个消息通道
+	done := make(chan bool)        //定义一个done通道，用来通知进程退出
+
+	defer close(messages) //退出主线程时关闭通道
+
+	//consumer
+	go func() {
+		ticker := time.NewTicker(1 * time.Second) //定时器，间隔1秒
+		for _ = range ticker.C {                  //遍历定时器，会按照间隔每秒循环一次
+			select {
+			case <-done: //如果done通道中接收到消息，退出运行
+				fmt.Println("child process interrupt...")
+				return
+			default:
+				fmt.Printf("receive message %d\n", <-messages) //从messages通道中取出数据
+			}
+		}
+	}()
+
+	//producer
+	for i := 0; i < 10; i++ {
+		messages <- i //循环向通道中发送10条数据
+	}
+
+	time.Sleep(5 * time.Second) //休息5秒
+	close(done)                 //关闭done通道，上面协程会收到消息
+	time.Sleep(1 * time.Second) //等待一下协程
+	fmt.Println("main process exit!")
+}
+
+
+/*
+执行结果：
+receive message 0
+receive message 1
+receive message 2
+receive message 3
+receive message 4
+child process interrupt...
+main process exit!
+*/
+```
+
+
+
+
+
+#### 停止子协程
+
+```go
+done := make(chan bool) //定义一个通道，用来通知关闭下面的子协程
+go func() {
+    for {
+        //子协程中定义select，从done通道获取到消息后，执行退出操作
+        select {
+        case <-done:
+            fmt.Println("done channel is triggered, exit child go routine")
+            return
+        }
+    }
+}()
+fmt.Println("将要关闭通道，退出子协程")
+close(done)			 //主线程中关闭通道，上面的子协程会收到消息
+time.Sleep(time.Second)
+fmt.Println("退出主线程")
+
+```
+
+
+
+#### 通过Context停止子协程
+
+* Context 是Go语言对 go routine 和 timer 的封装
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+defer cancel()
+go process(ctx, 100*time.Millisecond)	//没看明白这条
+<-ctx.Done()	//触发ctx.Done()
+fmt.Println("main:", ctx.Err())	//会打印超过deadline
+```
 
 
 
