@@ -415,6 +415,9 @@ for index, value := range MyArray{
 * 示例：
 
   * ```go
+    //创建一个slice
+    oneSlice := make([]int)
+    
     func main(){
         myArray := [5]int{1,2,3,4,5}	//初始化一个数组myArray
         mySlice := myArray[1:3]	//取myArray中的第1~2号元素（元素是从0开始的），赋值给mySlice切片对象
@@ -480,7 +483,8 @@ for index, value := range MyArray{
     a = append(b,1)	//给b切片中添加一个新值，并赋值给a，此时a原先分配的内存空间可能不足，此情况下系统会在内存中开辟新的连续内存空间，将b的值{1,2,3}及后添加的 1 放到新开辟的内存空间，再将此空间赋值给a，此时a和c的内存空间地址已经不一样，需要注意 
     ```
 
-  * 
+    
+    
 
 * 修改切片的值
 
@@ -499,7 +503,8 @@ for index, value := range MyArray{
     fmt.Printf("mySlice %+v\n",mySlice)
     ```
 
-  * 
+    
+    
 
 
 
@@ -638,6 +643,16 @@ for index, value := range MyArray{
 
 
 # 函数
+
+函数定义格式：
+
+```go
+func function_name( [parameter list] ) [return_types] {
+   函数体
+}
+```
+
+
 
 ## Main函数
 
@@ -966,8 +981,6 @@ Go语言中的可变参数允许调用方法传递任意多个相同类型的参
 
 # 接口
 
-
-
 * 接口定义一组方法集合
 
   * ```go
@@ -1068,7 +1081,7 @@ Go语言中的可变参数允许调用方法传递任意多个相同类型的参
 
 * 示例
 
-  * ```
+  * ```go
     //初始化一个map[string]string类型的对象myMap，长度为10
     myMap := make(map[string]string, 10)
     //向myMap中放入键值对 "a":"b"

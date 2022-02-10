@@ -148,23 +148,29 @@
 1. 修改yum、apt-get源文件
 2. yum或apt安装
 3. 下载镜像
-```
-安装docker 
+```bash
+#CentOS安装docker 
 yum -y install epel-release
 yum -y update
 yum -y install docker-io
 
-查看docker信息  
+#ubuntu安装
+sudo apt-get update
+sudo apt-get install -y docker.io
+
+
+#查看docker信息  
 docker version
 docker info 
 
-查看docker进程container  
+#查看docker进程container  
 docker ps
 ```
 
 
 
 ### 镜像加速
+
 修改/etc/docker/daemon.json文件
 
 ```
