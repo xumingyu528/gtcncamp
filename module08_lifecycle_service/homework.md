@@ -1,0 +1,128 @@
+#### 1. **第一部分**
+
+现在你对 Kubernetes 的控制面板的工作机制是否有了深入的了解呢？
+是否对如何构建一个优雅的云上应用有了深刻的认识，那么接下来用最近学过的知识把你之前编写的 http 以优雅的方式部署起来吧，你可能需要审视之前代码是否能满足优雅上云的需求。
+作业要求：编写 Kubernetes 部署脚本将 httpserver 部署到 Kubernetes 集群，以下是你可以思考的维度。
+
+- 优雅启动
+- 优雅终止
+- 资源需求和 QoS 保证
+- 探活
+- 日常运维需求，日志等级
+- 配置和代码分离
+
+
+
+deployment配置yaml文件
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpserver
+  namespace: default
+  labels:
+    app: httpserver
+    version: v0.1
+spec:
+  replicas: 1
+  selector: # 选择器
+    matchLabels: # 匹配标签
+      app: httpserver
+      version: v0.1
+  template:
+    metadata: # 资源的元数据/属性 
+      annotations: # 自定义注解列表
+        sidecar.istio.io/inject: "false" # 自定义注解名字
+      labels: # 设定资源的标签
+        app: httpserver
+        version: v0.1
+    spec: # 资源规范字段
+      containers:
+      - name: httpserver # 容器的名字   
+        image: xumingyu/httpserver:v0.1 # 容器使用的镜像地址   
+        imagePullPolicy: IfNotPresent 
+        resources: # 资源管理
+          limits: # 最大使用
+            cpu: 300m # CPU，1核心 = 1000m
+            memory: 500Mi # 内存，1G = 1024Mi
+          requests:  # 容器运行时，最低资源需求，也就是说最少需要多少资源容器才能正常运行
+            cpu: 100m
+            memory: 100Mi
+        livenessProbe: # pod 内部健康检查的设置
+          httpGet: # 通过httpget检查健康，返回200-399之间，则认为容器正常
+            path: /healthz # URI地址
+            port: 80 # 端口
+            scheme: HTTP # 协议
+            # host: 127.0.0.1 # 主机地址
+          initialDelaySeconds: 30 # 表明第一次检测在容器启动后多长时间后开始
+          timeoutSeconds: 5 # 检测的超时时间
+          periodSeconds: 30 # 检查间隔时间
+          successThreshold: 1 # 成功门槛
+          failureThreshold: 5 # 失败门槛，连接失败5次，pod杀掉，重启一个新的pod
+        readinessProbe: # Pod 准备服务健康检查设置
+          httpGet:
+            path: /healthz
+            port: 80
+            scheme: HTTP
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 5
+        ports:
+          - name: http # 名称
+            containerPort: 80 # 容器开发对外的端口 
+            protocol: TCP # 协议
+
+```
+
+
+
+
+
+
+
+service的yaml文件：
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpserver-svc
+  namespace: default
+  labels:
+    app: httpserver
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: httpserver
+
+```
+
+
+
+
+
+
+
+
+
+#### 2. **第二部分**
+
+除了将 httpServer 应用优雅的运行在 Kubernetes 之上，我们还应该考虑如何将服务发布给对内和对外的调用方。
+来尝试用 Service, Ingress 将你的服务发布给集群外部的调用方吧。
+在第一部分的基础上提供更加完备的部署 spec，包括（不限于）：
+
+- Service
+- Ingress
+
+可以考虑的细节
+
+- 如何确保整个应用的高可用。
+- 如何通过证书保证 httpServer 的通讯安全。

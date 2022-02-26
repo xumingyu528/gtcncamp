@@ -170,7 +170,7 @@
 
 
 
-## CRD - CustonResourceDefinition
+## CRD - CustomResourceDefinition
 
 
 
