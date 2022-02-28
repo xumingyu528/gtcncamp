@@ -30,6 +30,11 @@ spec:
     matchLabels: # 匹配标签
       app: httpserver
       version: v0.1
+  strategy: # 策略
+    rollingUpdate: # 滚动更新
+      maxSurge: 30% # 最大额外可以存在的副本数，可以为百分比，也可以为整数
+      maxUnavailable: 30% # 在更新过程中能够进入不可用状态的 Pod 的最大值，可以为百分比，也可以为整数
+    type: RollingUpdate # 滚动更新策略
   template:
     metadata: # 资源的元数据/属性 
       annotations: # 自定义注解列表
@@ -109,11 +114,47 @@ spec:
 
 
 
+配置和日志等级放到ConfigMap中加载：
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-configs
+  namespace: default
+data:
+  appsettings: 
+   ........配置信息
+
+```
+
+
+
+在Pod中药挂载该CM：
+
+```yaml
+containers:
+  volumeMounts:
+  - name: settings
+    mountPath: /etc/app.config
+    subPath: appsettings
+
+
+volumes:
+  - name: settings
+    configMap:
+      name: app-configs
+```
 
 
 
 
-#### 2. **第二部分**
+
+
+
+
+
+#### 2. **第二部分** - 暂未开始
 
 除了将 httpServer 应用优雅的运行在 Kubernetes 之上，我们还应该考虑如何将服务发布给对内和对外的调用方。
 来尝试用 Service, Ingress 将你的服务发布给集群外部的调用方吧。
