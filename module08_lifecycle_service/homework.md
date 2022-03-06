@@ -160,7 +160,7 @@ volumes:
 
 
 
-#### 2. **第二部分** - 暂未开始
+#### 2. **第二部分**
 
 除了将 httpServer 应用优雅的运行在 Kubernetes 之上，我们还应该考虑如何将服务发布给对内和对外的调用方。
 来尝试用 Service, Ingress 将你的服务发布给集群外部的调用方吧。
@@ -173,3 +173,117 @@ volumes:
 
 - 如何确保整个应用的高可用。
 - 如何通过证书保证 httpServer 的通讯安全。
+
+
+
+
+
+Service 可以通过NodePort 方式暴露Node端口给集群外部使用，比较快速，默认端口是30000 ~ 33000 的随机端口：
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpserver-svc
+spec:
+        #type: ClusterIP
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+  selector:
+    app: httpserver
+
+
+
+
+# 效果
+root@master01:~# k get svc
+NAME             TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)        AGE
+httpserver-svc   NodePort    10.97.25.189   <none>        80:30854/TCP   3d3h
+
+```
+
+
+
+
+
+Ingress：
+
+```bash
+#通过 helm 安装
+helm repo add nginx-stable https://helm.nginx.com/stable
+helm install ingress-nginx nginx-stable/nginx-ingress --create-namespace --namespace ingress
+
+#安装完成后，ingress 的namespace 中可以看到对应资源
+root@master01:~# k get pods -n ingress
+NAME                                          READY   STATUS    RESTARTS   AGE
+ingress-nginx-nginx-ingress-bcc75ccf5-7cfcp   1/1     Running   0          45h
+root@master01:~# k get svc -n ingress
+NAME                          TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)                      AGE
+ingress-nginx-nginx-ingress   LoadBalancer   10.96.249.132   <pending>     80:32306/TCP,443:30658/TCP   45h
+```
+
+
+
+
+
+
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: httpserver
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: www.abc.com
+      http:
+        paths:
+          - backend:
+              service:
+                name: httpserver-svc
+                port:
+                  number: 80
+            path: /
+            pathType: Prefix
+```
+
+
+
+没有域名则需要在本机器hosts中手动指定域名解析。
+
+
+
+https证书通过cert-manager管理：
+
+```bash
+#安装
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.7.1/cert-manager.crds.yaml
+helm install \
+    cert-manager jetstack/cert-manager \
+    --namespace cert-manager \
+    --create-namespace \
+    --version v1.7.1 \
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
