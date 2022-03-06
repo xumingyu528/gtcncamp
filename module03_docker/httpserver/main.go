@@ -22,7 +22,10 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"os/signal"
 	"runtime"
+	"syscall"
 )
 
 func main() {
@@ -35,6 +38,17 @@ func main() {
 		fmt.Println("Error listening ", err.Error())
 		return
 	}
+
+	//优雅终止
+	go func() {
+		sigint := make(chan os.Signal, 1)
+		signal.Notify(sigint, os.Interrupt)
+		signal.Notify(sigint, syscall.SIGTERM)
+
+		<-sigint
+
+	}()
+
 }
 
 func simpleServer(w http.ResponseWriter, req *http.Request) {
