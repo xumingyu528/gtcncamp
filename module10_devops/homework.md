@@ -13,6 +13,7 @@
 ```go
 #在处理响应的方法里增加随机sleep 0-2 S 
 randSecond := rand.Intn(2000)
+
 #控制台打印随机ms
 println(randSecond)
 time.Sleep(time.Millisecond * time.Duration(randSecond))
@@ -41,7 +42,7 @@ import ("github.com/prometheus/client_golang/prometheus/promhttp")
 http.Handle("/metrics", promhttp.Handler())
 
 
-# 在处理的handle中，调用metrics的NewTimer方法，并用defer 使得在方法结束时出发ObserveTotal方法
+# 在处理的handle中，调用metrics的NewTimer方法，并用defer 使得在方法结束时触发ObserveTotal方法
 timer := metrics.NewTimer()
 defer timer.ObserveTotal()
 ```
@@ -244,7 +245,7 @@ root@master01:~#
 
 ## 4. 在Prometheus中查看Metrics
 在Prometheus中查看访问httpserver的延时数据，根据histogram_quantile绘制数据
-![](./note_images/prometheus1.png)
+![](./note_images/prometheus.png)
 
 
 ## 5. Grafana查看prometheus数据
