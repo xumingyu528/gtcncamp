@@ -42,6 +42,9 @@ func main() {
 
 func simpleServer(w http.ResponseWriter, req *http.Request) {
 
+	timer := metrics.NewTimer()
+	defer timer.ObserveTotal()
+
 	randSecond := rand.Intn(2000)
 	println(randSecond)
 	time.Sleep(time.Millisecond * time.Duration(randSecond))
