@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"gtcncamp/metrics"
 	"math/rand"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 )
 
 func main() {
+	metrics.Register()
 
 	http.HandleFunc("/", simpleServer)
 	http.HandleFunc("/healthz", healthyCheck)
