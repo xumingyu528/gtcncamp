@@ -22,10 +22,7 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"os"
-	"os/signal"
 	"runtime"
-	"syscall"
 )
 
 func main() {
@@ -40,14 +37,16 @@ func main() {
 	}
 
 	//优雅终止
-	go func() {
-		sigint := make(chan os.Signal, 1)
-		signal.Notify(sigint, os.Interrupt)
-		signal.Notify(sigint, syscall.SIGTERM)
+	// go func() {
+	// 	sigint := make(chan os.Signal, 1)
+	// 	signal.Notify(sigint, os.Interrupt)
+	// 	signal.Notify(sigint, syscall.SIGTERM)
 
-		<-sigint
+	// 	<-sigint
 
-	}()
+	// 	if err := http.
+
+	// }()
 
 }
 
