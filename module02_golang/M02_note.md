@@ -316,13 +316,20 @@ func (q *Type) Get() (item interface{}, shutdown bool) {
 # 线程调度
 
 
-
 ## Go 语言的线程调度
 
-
-
-
-
+* 进程：资源分配的基本单位
+* 线程：调度的基本单位
+* 无论是线程还是进程，在 linux 中都以 task_struct 描述，从内核角度看，与进程无本质区别
+  * task_struct 结构体中主要包含几个模块：
+    * mm：memory module
+    * fs：file system
+    * files：进程所打开的文件
+    * signal：接收信号量
+  * 不同进程之间上述资源是相互独立的
+* Glibc 中的 pthread 库提供 NPTL（Native POSIX Threading Library）支持
+  * 创建线程时，task_struct结构体的mm、fs、files、signal等资源与父进程一样，是共享的
+  
 
 
 ## Linux 进程的内存使用
@@ -350,18 +357,20 @@ func (q *Type) Get() (item interface{}, shutdown bool) {
 
 
 ## Goroutine
-
+Go 语言基于 GMP 模型实现用户态线程
 
 
 ### GMP模型
 
 Go 语言基于 GMP 模型实现用户态线程
 
-* Goroutine：
-* Machine：
-* Process：
+* Goroutine：标识 goroutine，每个 goroutine 都有自己的栈空间，定时器，初始化的栈空间在 2k 左右，空间随着需求增长
+* Machine：抽象画代表内核线程，记录内核线程栈信息，当 goroutine 调度到线程时，使用该 goroutine 自己的栈信息
+* Process：代表调度器，负责调度 goroutine，维护一个本地 goroutine 队列，M 从 P 上获得 goroutine 并执行，同时还负责部分内存的管理
 
 
+### MPG的对应关系
+KSE：Kernel Scheduling Entity
 
 
 
