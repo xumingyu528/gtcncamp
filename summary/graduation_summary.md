@@ -14,7 +14,7 @@
   * [模块二，未完成](../module02_golang/M02_note.md)，进程管理、内存管理、GMP模型部分需要经常回顾
     * [这里有一个作业](../module02_golang/httpserver/main.go)，优雅启动和优雅终止后面写程序时需要多考虑下
 * [Docker](../module03_docker/M03_note.md)，DockerFile 分阶段构建需要再整理下
-* [Kubernetes基础，剩余一小部分](../module04_k8s_base/M04_note.md)
+* [Kubernetes基础](../module04_k8s_base/M04_note.md)
 * [Etcd](../module05_etcd/M05_note.md)
   * 日志、高可用等部分未整理
 * [API Server](../module06_apiserver/M06_note.md)

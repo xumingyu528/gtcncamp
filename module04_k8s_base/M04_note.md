@@ -914,61 +914,212 @@ special.type
 
 
 ## Secret
+* Secret 是用来保存和传递密码、密钥、认证凭证等敏感信息的对象
+* 使用 Secret 的好处是可以避免把敏感信息明文写在配置文件里
+* Kubernetes 集群中配置和使用服务不可避免的要用到敏感信息实现登录、认证等功能，例如访问 AWS 存储的用户名密码
+* 为了避免将敏感信息明文写在配置文件种，可以将这些信息存入 Secret 对象中，配置文件通过 Secret 对象引用这些敏感信息
+* 好处：意图明确，避免重复，减少暴露机会
 
 
 
+## 用户（User Account）& 服务账户（Service Account）
+* 用户账户为人提供账户标识，服务账户为计算机进程和 Kubernetes 集群中运行的 Pod 提供账户标识
+* 用户账户和服务账户的一个区别是作用范围：
+  * UA 对应的是人的身份，与 Namespace 无关，所以 UA 是跨 Namespace 的
+  * SA 对应的是一个运行中的程序身份，与特定的 Namespace 相关
+
+```bash
+# k8s 为每个 namespace 创建了 Service Account
+root@master01:~/envoy# kubectl get sa
+NAME                            SECRETS   AGE
+default                         1         51d
+jenkins                         1         47d
+
+# 获取 default ns 信息，其中有 secrets
+root@master01:~/envoy# kubectl get sa default -oyaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  creationTimestamp: "2022-03-03T04:11:53Z"
+  name: default
+  namespace: default
+  resourceVersion: "422"
+  uid: 4cac76c0-2d12-4ada-8be6-addf3c2f1d2a
+secrets:
+- name: default-token-9fmzk
+root@master01:~/envoy# 
+
+
+# 查看 secrets，包含了 ca、token 等信息
+root@master01:~/envoy# kubectl get secret default-token-9fmzk -oyaml
+apiVersion: v1
+data:
+  ca.crt: LS0tLS1CRUdJT...........omit
+  namespace: ZGVmYXVsdA==
+  token: ZXlKaGJHY2................omit
+kind: Secret
+metadata:
+  annotations:
+    kubernetes.io/service-account.name: default
+    kubernetes.io/service-account.uid: 4cac76c0-2d12-4ada-8be6-addf3c2f1d2a
+  creationTimestamp: "2022-03-03T04:11:53Z"
+  name: default-token-9fmzk
+  namespace: default
+  resourceVersion: "421"
+  uid: af27c9c0-dcaa-400a-b636-b127b6270e7b
+type: kubernetes.io/service-account-token
 
 
 
+# 查看一个 Pod
+root@master01:~/envoy# k get pods testpod -oyaml
+apiVersion: v1
+kind: Pod
+metadata:
+  # ......... omit ........
+  # k8s 会将 SA 对应的 证书等挂载进 Pod 中，Pod 与 API Server 通信时会携带这些信息，API Server 从而知道 Pod 身份、权限等信息
+    volumeMounts:
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-crn4q
+      readOnly: true
+ # ......... omit ........
+  serviceAccount: default
+  serviceAccountName: default
+  terminationGracePeriodSeconds: 30
+  tolerations:
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+# ......... omit ........
+  volumes:
+  - name: kube-api-access-crn4q
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          expirationSeconds: 3607
+          path: token
+      - configMap:
+          items:
+          - key: ca.crt
+            path: ca.crt
+          name: kube-root-ca.crt
+      - downwardAPI:
+          items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+            path: namespace
+
+```
 
 
 
 ## Service
+Service 是应用服务的抽象，通过 labels 为应用提供负载均衡和服务发现。  
+匹配 labels 的 Pod IP 和端口列表组成 endpoints，由 Kube-proxy 负责将服务 IP 负载均衡到这些 endpoints 上。  
+每个 Service 都会自动分配一个 Cluster IP（仅在集群内部可访问的虚拟地址）和 DNS 名，其它容器可以通过改地址或 DNS 来访问服务，而不需要了解后端容器的运行。  
 
 
-
-
-
-
-
-
-
-
+示例：
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-envoy
+spec:
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 10000
+      protocol: TCP
+      name: web
+    - port: 81
+      targetPort: 9901
+      protocol: TCP
+      name: webadmin
+  selector: # Service 主要通过 selector 关联后端 Pod
+    run: envoy
+```
 
 
 
 ## Replica Set
+* Pod 只是单个应用实例的抽象，要构建高可用应用，通常需要构建多个同样的副本，提供同一个服务
+* Kubernetes 为此抽象除了副本集 ReplicaSet ，允许用用定义 Pod 的副本数，每一个 Pod 都会被当做一个无状态的成员进行管理，K8s 保证总是有用户期望数量的 Pod 正常运行
+* 当某个副本宕机以后，控制器将会创建一个新的副本
+* 当业务负载发送变更需要调整扩缩容时，可以方便的调整副本数量
 
 
 
+## 部署（Deployment）
+* 部署（Deployment）表示用户对 Kubernetes 集群的一次更新操作
+* 部署是一个比 RS 应用模式更广的 API 对象，可以是创建一个新的服务，更新一个新的服务，也可以是滚动升级一个服务
+* 滚动升级一个服务，实际是创建一个新的 RS，然后逐渐将新 RS 中的副本数增加到理想状态，将旧 RS 中的副本数减少到 0  的复合操作
+* 这样的复合操作 RS 不太好描述，因此使用更通用的 Deployment 描述 
+* 以 Kubernetes 的发展方向，未来对所有长期服务的业务管理，都会通过 Deployment 来管理
 
-
-
-
-
-
-## 部署集（Deployment）
-
-
-
-
-
-
+示例：
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    run: envoy
+  name: envoy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      run: envoy
+  template:
+    metadata:
+      labels:
+        run: envoy
+    spec:
+      containers:
+      - image: envoyproxy/envoy-dev
+        name: envoy
+        volumeMounts:
+        - name: envoy-config
+          mountPath: "/etc/envoy"
+          readOnly: true
+      volumes:
+      - name: envoy-config
+        configMap:
+          name: envoy-config
+```
 
 
 
 ## 有状态服务集（Stateful Set）
+* 对鱼 StatefuSet 中的 Pod，每个 Pod 挂载自己独立的存储，如果一个 Pod 出现故障，从其他节点启动一个同样名字的 Pod ，要挂载上原来 Pod 的存储继续以它的状态提供服务
+* 适合于 StatefulSet 的业务包括数据库服务 MySQL 和 PostgreSQL，集群化管理服务 Zookeeper、etcd 等有状态服务
+* 使用 StatefulSet，Pod 仍然可以通过漂移到不同节点提供高可用，而存储也可以通过外挂的存储来提供高可靠性，StatefulSet 做的只是将确定的存储关联起来保证状态的连续性
 
 
 
 
 
+## Statefulset 与 Deployment 的差异
+* 身份标识
+  * StatefulSet  Controller 为每个 Pod 编号，序号从 0 开始
+* 数据存储
+  * Sts 允许用户定义 volumeClaimTemplates，Pod 被创建的同时，Kubernetes 会以 volumeClaimTemplates 中定义的模板创建存储卷，并挂载给 Pod 
+* StatefulSet 的升级策略不同
+  * onDelete
+  * 滚动升级
+  * 分片升级
 
 
 
 
 ## 任务（Job）
-
+* Job 是 Kubernetes 用来控制批处理型任务的 API 对象
+* Job 管理的 Pod 根据用户的设置把任务成功完成后就自动退出
+* 成功完成的标志根据不同的 spec.completions 策略而不同：
+  * 单 Pod 型任务有一个 Pod 成功就标志完成
+  * 定数成功型任务保证有 N 个任务全部完成
+  * 工作队列型任务根据应用确认的全局成功而标志成功
 
 
 
@@ -976,7 +1127,10 @@ special.type
 
 
 ## 后台支撑服务集（DaemonSet）
-
+* 长期伺服型和批处理型服务的核心在业务应用，可能有些节点运行多个同类业务的 Pod，有些节点上又没有这类 Pod 运行
+* 而后台支撑型服务的核心关注点在 Kubernetes 集群中的节点（物理机或虚拟机），要保证每个节点上都有一个此类 Pod 运行
+* 节点可能是所有集群节点也可能是通过 nodeSelector 选定的一些特定节点
+* 典型的后台支撑服务包括存储、日志和监控等在每个节点上支撑 Kubernetes 集群运行的服务
 
 
 
@@ -992,19 +1146,9 @@ special.type
 
 
 ## 存储 PV 和 PVC
-
-
-
-
-
-
-
-
-
-
-
-
-
+* PersistentVolume（PV）是集群中的一块存储卷，可以由管理员手动设置，或当用户创建 PersistentVolumeClaim（PVC）时根据 StorageClass 动态设置
+* PV 和 PVC 与 Pod 生命周期无关。也就是说，当 Pod 中的容器重新启动、 Pod 重新调度或者删除时，PV 和 PVC 不会受到影响，Pod 存储于 PV 里的数据得以保留
+* 对于不同的使用场景，用户通常需要不同属性（例如性能、访问模式等）的 PV
 
 
 
@@ -1012,23 +1156,10 @@ special.type
 
 
 ## CRD - CustomResourceDefinition
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# 集群安装
-
+* CRD 就想数据库的开放式表结构，允许用户自定义 Schema
+* 用户可以基于 CRD 定义一切需要的模型，满足不同业务的需求
+* 社区鼓励基于 CRD 的业务抽象，众多主流的扩展应用都是基于 CRD 构建的，比如 Istio、Knative
+* 甚至基于 CRD 退出了 Operator Mode 和 Operator SDK，可以以极低的开发成本定义新对象，并构建新对象的控制器 
 
 
 
