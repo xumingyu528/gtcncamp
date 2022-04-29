@@ -2,12 +2,6 @@
 
 
 
-
-
-
-
-
-
 # kube-scheduler
 
 kube-scheduler 负责分配调度Pod 到集群内的节点上，它监听 kube-apiserver，查询还未分配的 Node 的 Pod，然后根据调度策略为这些 Pod 分配节点（更新 Pod 的 NodeName 字段）。  
@@ -142,7 +136,7 @@ kube-scheduler 调度分为两个阶段，predicate 和 priority：
 * Daemon
 * Deployment
 * Endpoint
-* Garbage Collector：处理级联删除，比如删除 deployment 的同事删除 replicaset 以及 Pod
+* Garbage Collector：处理级联删除，比如删除 deployment 的同时删除 replicaset 以及 Pod
 * CronJob
 
 

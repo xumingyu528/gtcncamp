@@ -167,7 +167,13 @@
 
 
 # kube-proxy 组件
-
+每台机器都运行一个 kube-proxy 服务，它监听 API Server 中 service 和 endpoint 的变化情况，并通过 iptables 等来为服务配置负载均衡（仅支持 TCP 和 UDP）  
+kube-proxy 可以直接运行在物理机上，也可以以 static pod 或者 DaemonSet 的方式运行。  
+kube-proxy 当前支持以下几种实现：
+* userspace：最早的负载均衡方案，监听一个端口，所有服务通过 iptables 转发到这个端口，然后在其内部负载到实际的 Pod
+* iptables：基于 iptables 实现 service 负载均衡，主要是服务多的时候产生太多的 iptables 规则，非增量式更新会引入一定的时延，有明显的性能瓶颈
+* ipvs：v1.8 以后新增的 ipvs 模式，采用增量更新，可以保证 service 更新期间连接保持不断开
+* winuserspace：同 userspace，但仅工作在 windows
 
 
 
