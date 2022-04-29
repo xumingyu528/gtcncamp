@@ -25,7 +25,7 @@
   * ingress 案例再消化下
 * [生产化集群，从这里到最后的笔记都未整理 !=.= ](../module09_prod_cluster_manage/M09_note.md)
 * [DevOps](../module10_devops/M10_note.md)
-  * 
+  * CI/CD、Git、jenkins、prometheus、loki
 * [应用迁移](../module11_app_migration/M11_note.md)
 * [Istio](../module12_istio/M12_note.md)
 * [多集群](../module13_multi-cluster/M13_note.md)
