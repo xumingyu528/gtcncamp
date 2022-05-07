@@ -16,7 +16,6 @@
 * [Docker](../module03_docker/M03_note.md)，DockerFile 分阶段构建需要再整理下
 * [Kubernetes基础](../module04_k8s_base/M04_note.md)
 * [Etcd](../module05_etcd/M05_note.md)
-  * 日志、高可用等部分未整理
 * [API Server](../module06_apiserver/M06_note.md)
   * 代码走读部分未深入理解
 * [Control plane，未整理](../module07_control-plane/M07_note.md)

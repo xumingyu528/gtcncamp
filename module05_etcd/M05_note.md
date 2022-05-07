@@ -377,6 +377,37 @@ etcd V3 的 Watch 机制支持 Watch 某个固定的 key，也支持 Watch 一�
 在这种机制下，etcd V3 支持从任意版本开始 watch，没有 V2 的 1000条历史 event 表限制的问题（当然这是指没有 compact 的情况下）。
 
 
+
+## MVCC（MultiVersion Concurrence Control）
+
+本质是将 key 的历史变化都存储下来  
+
+### 悲观锁
+
+程序A修改数据 D1，数据库加锁，程序B同时也来修改数据 D1，数据库会要求程序B等待程序A修改完成释放锁以后再来。  
+
+* 读写锁（可同时多读、写时互斥）、互斥锁（线程互斥）
+* 控制粒度大，高并发场景下容易造成事务阻塞
+
+### 乐观锁
+
+默认不加锁，出现冲突报错。  
+
+乐观的认为不会数据冲突，但发生冲突时要能检测到。  
+
+### MVCC
+
+不会直接覆盖，增加版本信息存储新的数据，每个数据都有一个版本号。版本号是一个逻辑时钟，不会因为服务器时间的差异受影响。    
+
+* etcd 中实现 MVCC 通过 revision 实现，main、sub 版本号
+
+![](./note_images/boltdb_revision.png)
+
+* 增删改都会新增一条记录
+* 删除由 compact 完成，可以通过 `etcdctl compact {version}` 释放指定版本号以前标记删除的数据
+
+
+
 ## 练习：启动实例，写入查询数据
 
 ```bash
@@ -428,7 +459,7 @@ value1
 --name 'default'
 # Path to the data directory, default is current path
 --data-dir '${name}.etcd'
-# URLs to listen on for peer traffic
+# URLs to listen on for peer traffic，
 --listen-peer-urls 'http://localhost:2380'
 # URLs to listen on for client traffic
 --listen-client-urls 'http://localhost:2379'

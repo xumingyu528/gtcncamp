@@ -112,7 +112,6 @@ Kubernetes API 的每个请求都会经过多阶段的访问控制之后才会�
       type: DirectoryOrCreate
   name: auth-files
 
-
   # 修改完成后，相关组件会重启加载配置文件
   # 使用手动请求
   # 格式：curl https://${这里填写api server 的地址和端口}/api/v1/namespace/default -H "Authorization: Bearer xmy-token" -k  
@@ -131,8 +130,9 @@ Kubernetes API 的每个请求都会经过多阶段的访问控制之后才会�
     },
     "code": 403
   }
-
   ```
+
+
 * X509认证
   ```bash
   # 生成证书
@@ -157,6 +157,7 @@ Kubernetes API 的每个请求都会经过多阶段的访问控制之后才会�
     - client auth
   EOF
   ```
+
   ```bash
   # 查看kubernetes集群的csr对象
   k get csr
@@ -190,9 +191,9 @@ Kubernetes API 的每个请求都会经过多阶段的访问控制之后才会�
   NAME                                           READY   STATUS    RESTARTS      AGE
   httpserver-65cbb484d-bdbz7                     1/1     Running   0             9d
   jenkins-0                                      1/1     Running   1 (10d ago)   15d
-
-
   ```
+
+
 
 * Token -- ServerAccount
   ```bash
@@ -204,7 +205,6 @@ Kubernetes API 的每个请求都会经过多阶段的访问控制之后才会�
   # 输出的内容为token，可以在请求API Server时，在头部加入该token，API Server会识别对应的用户
   # 如下示例，和静态token访问方式一致，将token部分替换为上面输出的内容
   curl https://10.0.12.2:6443/api/v1/namespace/default -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6IjQyaDhlTnowMlZkQmxNUFlaTjZKT0REYnJtdVpxcEJQenYtWDhOVE1zSW8ifQ.eyJpc3MiOiJrdWJlcm5ldGVzL3NlcnZpY2VhY2NvdW50Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9uYW1lc3BhY2UiOiJkZWZhdWx0Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9zZWNyZXQubmFtZSI6ImplbmtpbnMtdG9rZW4tbnAyaDIiLCJrdWJlcm5ldGVzLmlvL3NlcnZpY2VhY2NvdW50L3NlcnZpY2UtYWNjb3VudC5uYW1lIjoiamVua2lucyIsImt1YmVybmV0ZXMuaW8vc2VydmljZWFjY291bnQvc2VydmljZS1hY2NvdW50LnVpZCI6IjZmNzIzM2IyLWEyNjktNDJhNS05ZDIxLTljNTdmZjBhYmI3ZCIsInN1YiI6InN5c3RlbTpzZXJ2aWNlYWNjb3VudDpkZWZhdWx0OmplbmtpbnMifQ.KXCa-K8PYdEvRttF17_EwfgZQdAV1ICkBFZ0OxmxUfujuNb9o3mMSAeqA37lY52yvX_zG-GSfM6LS6uWtNKInWXdkTrJ5kzMKbWmb6dXgM2mVvIn4WxMfMwVUaLD-VSQ5e9Og2fJKxHVc7Yza8zLdsAj_9Kmgo38tFe4kl2FDTQr3vjefoaAdoZxXafca_HF9hiUPij6E_2OBxtZAjlUv-vHZp-Oxt7l9F3_iXntw4pOK8scXc1rSy6f-K7gm5Buw2-t7MvGi2We0vqMHcVoSYGABEyuZ76iPTGO8yaBVfuHy1mtUxXep6OZF0KFuAmSAGB-L0bRpdHlcRopu0Qbew" -k
-
   ```
 
 
@@ -250,8 +250,6 @@ Kubernetes API 的每个请求都会经过多阶段的访问控制之后才会�
 
 
 ### 认证服务工作流程
-
-
 
 
 
@@ -322,7 +320,7 @@ Kubernetes 基于 RBAC 设计的一套用户角色管理机制
 Role 是一系列权限的集合，Role 只能用来给某个特定 namespace 中的资源做鉴权，对多 namespace 和集群级的资源或者是非资源类的API使用 ClusterRole  
 
 ```yaml
-# Role 示例
+#Role 示例
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
@@ -335,7 +333,7 @@ rules:
 ```
 
 ```yaml
-# ClusterRole 示例
+#ClusterRole 示例
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:   # ClusterRole 没有namespace，是全局范围的
@@ -347,8 +345,8 @@ rules:
 ```
 
 ```yaml
-# binding
-# 配置是允许 dave 读取 development 的namespace下的secrets 
+#binding
+#配置是允许 dave 读取 development 的namespace下的secrets 
 kind: RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
@@ -375,7 +373,7 @@ roleRef:  #引用 ClusterRole
 
 
 ```yaml
-# 针对群组授权
+#针对群组授权
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:   
@@ -393,7 +391,7 @@ roleRef:  #引用 ClusterRole
 
 
 ```yaml
-# 对service account 授权
+#对service account 授权
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:   
@@ -480,10 +478,10 @@ namespace-creator role 定义用户可操作的对象和对应的读写操作。
 ```bash
 # 查看apiserver 帮助中可以从中检索admission关键字
 kubectl exec -it kube-apiserver-master01 -n kube-system -- kube-apiserver -h
-
 # 其中有 --disable-admission-plugins 和 --enable-admission-plugins 代表了默认开启和关闭的插件列表
-
 ```
+
+
 
 ## 准入控制插件开发
 
@@ -552,6 +550,7 @@ kubectl exec -it kube-apiserver-master01 -n kube-system -- kube-apiserver -h
 * 每个优先级维护自定义的并发限制，加强了隔离度，这样不同优先级的请求，就不会相互饿死
 * 在同一个优先级内，公平排队算法可以防止来自不同 flow 的请求相互饿死
 * 该算法将请求排队，通过配对机制，防止在平均负载较低时，通信量突增而导致请求失败
+
 
 ```bash
 # kubernetes 默认的flowschema

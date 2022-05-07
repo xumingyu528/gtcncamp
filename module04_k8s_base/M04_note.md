@@ -1141,16 +1141,12 @@ spec:
 
 
 
-
-
-
-
 ## 存储 PV 和 PVC
 * PersistentVolume（PV）是集群中的一块存储卷，可以由管理员手动设置，或当用户创建 PersistentVolumeClaim（PVC）时根据 StorageClass 动态设置
 * PV 和 PVC 与 Pod 生命周期无关。也就是说，当 Pod 中的容器重新启动、 Pod 重新调度或者删除时，PV 和 PVC 不会受到影响，Pod 存储于 PV 里的数据得以保留
 * 对于不同的使用场景，用户通常需要不同属性（例如性能、访问模式等）的 PV
 
-
+* StorageClass
 
 
 
