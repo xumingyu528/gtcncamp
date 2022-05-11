@@ -1460,29 +1460,863 @@ blackhole 10.244.3.0/24 proto bird
 
 # 容器存储接口 CSI
 
+## 容器运行时存储驱动
+
+* 除了外挂存储卷外，容器启动后，运行时所需文件系统性能直接影响容器性能。  
+* 早期的 Docker 采用 Device Mapper 作为容器运行时存储驱动，因为 OverlayFS 尚未合并进 Kernel
+* 目前 Docker 和 containerd 都默认以 OverlayFS 作为运行时存储驱动
+* OverlayFS 目前已经有非常好的性能，与 DeviceMapper 相比优 20% 左右，与操作主机文件性能几乎一致
+
+
+
+## 外挂存储驱动：存储卷插件
+
+### in-tree
+
+早期存储相关逻辑代码写在 kubelet 中，比较耦合，存储和 kubelet 发版/修复都要受到彼此影响。
+
+
+
+### out-of-tree FlexVolume 插件
+
+Kubernetes 通过调用计算节点的本地可执行文件与存储插件交互，需要宿主机 root 权限，安装 attach、mount 等工具，虽然与 kubelet 解耦，也不够灵活。
+
+
+
+### out-of-tree CSI 插件
+
+* CSI 通过 RPC 与存储驱动进行交互，与原先调用本地可执行文件的方式不同
+* 设计 CSI 时，Kubernetes 对 CSI 存储驱动的打包和部署要求很少，主要定义了 Kubernetes 两个相关模块：
+  * kube-controller-manager
+    * 用于感知 CSI 驱动存在
+    * K8s 主控模块通过 Unix domain socket（而不是 CSI 驱动）或者其他方式进行直接地交互
+    * 主控模块只与 K8s 相关的 API 进行交互
+    * 因此 CSI 驱动若有依赖于 Kubernetes API 的操作，例如卷的创建、卷的 attach、卷的快照等，需要在 CSI 驱动里面通过 Kubernetes 的 API，来触发相关的 CSI 操作
+  * kubelet
+    * 用于与 CSI 驱动进行交互
+    * kubelet 通过 Unix domain socket 向 CSI 驱动发起 CSI 调用（如 NodeStageVolume、NodePublishVolume 等），再发起 mount 卷和 umount 卷
+    * kubelet 通过插件注册机制发现 CSI 驱动及用于 CSI 驱动交互的 Unix domain socket
+    * 所有部署在 Kubernetes 集群中的 CSI 驱动都要通过 kubelet 的插件注册机制来注册自己
 
 
 
 
 
+## CSI 架构
+
+CSI 的驱动一般包含 external-attacher、external-provisioner、external-resizer、external-snapshotter、node-driver-register、CSI driver 等模块，可以根据实际的存储类型和需求进行不同方式的部署。
+
+![](./note_images/CSI_driver.png)
+
+
+
+## 存储数据的方式
+
+### 临时存储
+
+常见的主要是 emptyDir 卷。  
+
+* emptyDir 是一种经常被用户使用的卷类型，最初是空的
+* 当 Pod 从节点上删除，emptyDir 卷中的数据也会被永久删除，但 Pod 中的容器重启时，emptyDir 卷内数据不会删除丢失
+* 默认情况下，emptyDir 卷存储在支撑该节点所使用的的存储介质上，可以使本地磁盘或网络存储
+* 多个 Pod 可以挂载同一块 emptyDir 进行数据共享
+* 可以通过 `emptyDir.medium` 字段设置为 `Memory` 来通知 Kubernetes 为容器安装 tmpfs，此时数据被存储在内存中，速度提升很多，但节点重启时数据会被清除。另外使用 tmpfs 的内存会记入容器使用内存总量，受到 Cgroup 限制
+* emptyDir 设计初衷是给应用充当缓存空间，或者存储中间数据，用于快速恢复。
+  * 实际使用中还是要根据业务特点判断是否使用 emptyDir
+  * emptyDir 空间位于系统根盘，被所有容器共享，所以在磁盘使用率较高时会触发 Pod 的 eviction ，从而影响业务稳定性
 
 
 
 
+
+### 半持久化存储
+
+常见的半持久化存储主要是 hostPath 卷。  
+
+* hostPath 卷能将主机节点文件系统上的文件或目录挂载到指定 Pod 中。
+* 一般不需要，有些需要获取节点系统信息的 Pod 很需要
+* 使用举例
+  * 某个 Pod 需要获取节点上所有 Pod 的 log，可以通过 hostPath 访问所有 Pod 的 stdout 输出存储目录，例如 /var/log/pods 路径
+  * 某个 Pod 需要统计系统相关信息，通过 hostPath 访问系统的 /proc 目录
+* 使用 hostPath 时，除必要 path 属性外，还可以选择性指定卷类型，包含目录、字符设备、块设备等
+
+#### 注意事项
+
+* 使用同一个目录的 Pod 可能会调度到不同节点，导致目录中内容不同
+* Kubernetes 在调度时无法顾及由 hostPath 使用的资源
+* Pod 被删除后，如果没有特别处理，那么 hostPath 上写的数据会遗留到节点上，占用磁盘空间
+
+
+
+### 持久化存储
+
+持久化是所有分布式系统必备特性，Kubernetes 引入了一些概念，StorageClass、Volume、PVC、PV等，将存储独立于 Pod 生命周期来进行管理。  
+
+Kubernetes 目前支持的持久化存储包含各种主流块存储和文件存储，例如 awsElasticBlockStore、azureDisk、cinder、NFS、cephfs、iscsi 等，大致可以分为网络存储和本地存储。  
+
+
+
+#### StorageClass
+
+用于指示存储的类型，不同存储类型通过不同 StorageClass 来为用户提供服务。  
+
+StorageClass 主要包含存储插件 provisioner、卷的创建和 mount 参数等字段。  
+
+
+
+#### PVC
+
+由用户创建，代表用户对存储需求的声明
+
+* 主要包含需要的存储大小、存储卷的访问模式、StorageClass 类型
+* 存储卷的访问模式和存储的类型必须一致
+
+|访问模式||含义|
+| ---- | ------------- | ---------------------------------------------- |
+| RWO  | ReadWriteOnce | 该卷只能在一个节点上被 mount，属性为可读可写   |
+| ROX  | ReadOnlyMany  | 该卷可以在不同的节点上被 mount，属性为只读     |
+| RWX  | ReadWriteMany | 该卷可以在不同的节点上被 mount，属性为可读可写 |
+
+
+
+
+
+#### PV
+
+由管理员提前创建，或者根据 PVC 的申请动态地创建，代表系统后端的真实存储空间，可以称为卷空间。  
+
+
+
+### 存储对象关系
+
+用户通过创建 PVC 来申请存储。控制器通过 PVC 的 StorageClass 和请求大小声明来存储后端创建卷，进而创建 PV，Pod 通过指定 PVC 来引用存储。  
+
+![](./note_images/CSI_obj_relationship.png)
+
+
+
+## 演示
+
+### emptyDir
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx
+          volumeMounts:
+          - mountPath: /cache
+            name: cache-volume
+      volumes:
+      - name: cache-volume
+        emptyDir: {}
+```
+
+
+
+### hostPath
+
+创建主机目录，写入文件
+
+```sh
+root@master01:~# mkdir /mnt/data
+root@master01:~# echo "hello from k8s storage" > /mnt/data/index.html
+root@master01:~# cat !$
+cat /mnt/data/index.html
+hello from k8s storage
+# 应用 pv、pvc、pod 的yaml
+kubectl apply -f pv.yaml
+kubectl apply -f pvc.yaml
+kubectl apply -f pod.yaml
+```
+
+pv.yaml
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: task-pv-volume
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 100Mi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/data"
+```
+
+pvc.yaml
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: task-pv-claim
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi
+```
+
+pod.yaml
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: task-pv-pod
+spec:
+  volumes:
+    - name: task-pv-storage
+      persistentVolumeClaim:
+        claimName: task-pv-claim
+  containers:
+    - name: task-pv-container
+      image: nginx
+      ports:
+      	- containerPort: 80
+      	  name: "http-server"
+      volumeMounts:
+        - mountPath: "/usr/share/nginx/html"
+          name: task-pv-storage
+```
+
+Pod 启动完成后，访问 nginx 默认端口，页面返回刚才添加的 index.html
+
+```bash
+root@master01:~# k get pod -owide
+NAME                                READY   STATUS    RESTARTS   AGE     IP            NODE     NOMINATED NODE   READINESS GATES
+task-pv-pod                         1/1     Running   0          10s     10.244.1.13   node01   <none>           <none>
+root@master01:~# curl 10.244.1.13
+hello for storage on node01
+```
+
+
+
+## 生产实践经验
+
+* 不同介质类型的磁盘，需要设置不同的 StorageClass，以便用户区分。
+
+* 本地存储的 PV 静态部署模式下，每个物理磁盘尽量只创建一个 PV，而不是划分多个分区来提供多个本地存储 PV，避免分区之间 I/O 干扰
+
+* 本地存储需要配合磁盘检测使用。当集群部署规模化以后，每个集群的本地存储 PV 可能会超过几万，磁盘损坏将会是频发事件。需要检测到磁盘损坏、丢盘等问题，对节点的磁盘和相应的本地存储 PV 进行特定的处理，例如触发告警、自动 cordon 节点、通知用户等
+
+* 根据需求的不同有不同的使用方式
+
+  * 追求磁盘速度可以采用独占硬盘方式使用存储
+  * 需要大空间，不是很追求读写速度，可以使用 LVM 等技术合成多块磁盘，采用 Dynamic local volume
+
+* 本地存储节点磁盘管理，需要灵活管理和自动化。节点磁盘的信息可以归一、集中化管理。
+
+  * 在 local-volume-provisioner 中增加部署逻辑，当容器运行起来时，拉取该节点需要提供本地存储的磁盘信息，例如磁盘设备路径，以 Filesystem 或 Block 的模式提供本地存储，或者是否需要加入某个 LVM 的虚拟组（VG）等
+  * local-volume-provisioner 根据获取的磁盘信息对磁盘进行格式化，或者加入到某个 VG，从而形成对本地存储支持的自动化闭环
+
+  
+
+### 独占硬盘
+
+![](./note_images/sole_local_volume.png)
+
+
+
+### Dynamic Local Volume
+
+CSI 驱动需要汇报节点上相关存储的资源信息，以便于调度。  
+
+* 不同机器厂家，汇报方式不同
+* 有的厂家机器上有 NVMe、SSD、HDD 等多种存储介质，希望分别汇报
+* 这种需求有别于其它存储类型的 CSI 驱动对接口的需求，如何汇报节点存储、让节点存储信息应用于调度，目前并没有统一意见
+* 集群管理员可以基于节点存储实际情况对开源 CSI 驱动和调度进行代码修改，再部署使用
+
+![](./note_images/dynamic_local_volume.png)
+
+#### local Dynamic 挑战
+
+如果将磁盘空间作为一个存储池（例如 LVM）动态分配，那么分配出来的逻辑卷空间的使用上，可能会受到其它逻辑卷的 I/O 干扰，因为底层物理卷可能是同一个。  
+
+如果 PV 后端磁盘空间是一块独立物理磁盘，则不受干扰。  
 
 
 
 # Rook 的工作原理
 
-Rook 是一款云原生环境下的开源分布式存储编排系统，目前支持 Ceph、NFS、EdgeFS、Cassandra、CockroachDB 等存储系统。  
+CNCF 已毕业的项目，针对 CSI Driver 的存储方案。  
+
+Rook 是一款云原生环境下的开源分布式存储编排系统，目前支持 Ceph、NFS、EdgeFS、Cassandra、CockroachDB 等存储类型的系统。    
+
+实现了一个自动管理、自动扩容、自动修复的分布式存储服务。支持自动部署、启动、配置、分配、扩缩容、升级、迁移、灾难恢复、监控以及资源管理等。  
+
+
+
+## Rook 架构
+
+![](./note_images/rook_architecture.png)
+
+* Rook Operator：通过 Operator + CRD 实现，集群大脑。以 Pod 形式运行，编写了 controller 逻辑，监听 Rook 集群相关内容，启动控制面组件 Pod 等
+* Provisioner：负责监控 Kubernetes PVC 对象的 Sidecar 容器，实现操作 PV 创建等
+* Rook client：
+  * Rook Agent：主要为支持 in-tree FlexVolume 方式
+  * CSI Driver：不同类型存储可以自己实现 CSIDriver 逻辑
 
 
 
 
 
+## Rook Operator
+
+Rook 的大脑，以 deployment 形式存在。  
+
+* 利用 K8s controller-runtime 框架实现 CRD，并进而接收 kubernetes 创建资源的请求，进行相关资源（集群、pool、块存储服务、文件存储服务等）的创建。
+* Rook Operater 监控存储守护进程，确保存储集群的健康
+* 监听 Rook Discovers 收集到的存储磁盘设备，并创建相应的服务（Ceph 的话就是 OSD 了）。
+
+
+
+```sh
+# 通常 Rook 集群启动的第一个组件就是 operator，再由它拉起其它组件
+# k get pods -n rook-ceph
+rook-ceph-operator-866c96498c-2m2gs             1/1     Running   0          28m
+```
 
 
 
 
 
+### Rook Discover
 
+* 以 DaemonSet 形式部署在所有的存储机上
+
+* 其检测挂接到存储节点上的存储设备，把符合要求的存储设备记录下来
+* Rook Operater 感知到这些记录以后就可以基于存储设备创建相应的服务
+
+实现是基于 `lsblk` 等命令
+
+```sh
+## discover device
+lsblk --all  --noheadings --list --output KNAME
+lsblk /dev/vda --bytes --nodeps --pairs --paths --output SIZE,ROTA,RO,TYPE,PKNAME,NAME,KNAME
+udevadm info --query=property /dev/vda
+lsblk --noheadings --pairs /dev/vda
+## discover ceph inventory
+ceph-volume invertory --format json
+```
+
+
+
+
+
+### CSI Driver 发现
+
+如果一个 CSI 驱动创建 CSIDriver 对象，Kubernetes 用户可以通过 get CSIDriver 命令查看到：
+
+```sh
+# rdb 、 ceph 相关的 csi driver
+root@master01:~/rook/cluster/examples/kubernetes/ceph# k get csidriver -A
+NAME                            ATTACHREQUIRED   PODINFOONMOUNT   STORAGECAPACITY   TOKENREQUESTS   REQUIRESREPUBLISH   MODES        AGE
+rook-ceph.cephfs.csi.ceph.com   true             false            false             <unset>         false               Persistent   74m
+rook-ceph.rbd.csi.ceph.com      true             false            false             <unset>         false               Persistent   74m
+```
+
+**特点**：
+
+* 自定义的 Kubernetes 逻辑
+* Kubernetes 对存储卷有一系列操作，这些 CSIDriver 可以自定义支持哪些操作
+
+
+
+
+
+## Provisioner
+
+CSI external-provisioner 是一个监控 Kubernetes PVC 对象的 Sidecar 容器。  
+
+* 分为通用框架部分和 CSI 部分，配合工作
+* 当用户创建 PVC 后，Kubernetes 会监测 PVC 对应的 StorageClass，如果 StorageClass 中的 provisioner 与某插件匹配，该容器通过 CSI Endpoint （通常是 unix socket）调用 CreateVolume 方法
+* 如果 CreateVolume 方法调用成功，则 Provisioner sidecar 创建 Kubernetes PV 对象
+
+
+
+provisioner 负责创建 volume、绑定 volume 与节点等，mount 由主机上的 agent 完成。  
+
+示例：
+
+```sh
+# ceph-provisioner 中镜像
+# 通用框架部分 attach、snapshot、resize 等功能
+image: registry.cn-hangzhou.aliyuncs.com/google_containers/csi-attacher:v3.3.0
+image: registry.cn-hangzhou.aliyuncs.com/google_containers/csi-snapshotter:v4.2.0
+image: registry.cn-hangzhou.aliyuncs.com/google_containers/csi-resizer:v1.3.0
+image: registry.cn-hangzhou.aliyuncs.com/google_containers/csi-provisioner:v3.0.0	# 负责监听 PVC 创建，如果发现其中的 provision 与自己一致，就调用下面的 csi 接口
+image: quay.io/cephcsi/cephcsi:v3.4.0	#具体 csi 存储驱动实现，每个存储驱动不同，根据自身功能去实现
+
+```
+
+rdb-provisioner 配置文件片段
+
+```yaml
+containers:
+  - args:
+    - --csi-address=$(ADDRESS)
+    - --v=0
+    - --timeout=150s
+    - --retry-interval-start=500ms
+    - --leader-election=true
+    - --leader-election-namespace=rook-ceph
+    - --default-fstype=ext4
+    - --extra-create-metadata=true
+    env:
+    # 监听的 socket 文件，是一个 emptyDir ，会将上面的参数作为入参
+    - name: ADDRESS
+      value: unix:///csi/csi-provisioner.sock
+    image: registry.cn-hangzhou.aliyuncs.com/google_containers/csi-provisioner:v3.0.0
+    imagePullPolicy: IfNotPresent
+    name: csi-provisioner
+    resources: {}
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /csi
+      name: socket-dir
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-p4zhc
+      readOnly: true
+
+```
+
+rbd csi driver 配置文件片段
+
+```yaml
+  - args:
+    - --nodeid=$(NODE_ID)
+    - --endpoint=$(CSI_ENDPOINT)
+    - --v=0
+    - --type=rbd
+    - --controllerserver=true
+    - --drivername=rook-ceph.rbd.csi.ceph.com
+    env:
+....
+# 这里挂载的是 emptyDir，socket-dir
+    - name: CSI_ENDPOINT
+      value: unix:///csi/csi-provisioner.sock
+    image: quay.io/cephcsi/cephcsi:v3.4.0
+    imagePullPolicy: IfNotPresent
+    name: csi-rbdplugin
+....
+  volumes:
+  # provisioner 和 csidriver 基于此路径下的 socket 文件通信
+  - emptyDir:
+      medium: Memory
+    name: socket-dir
+```
+
+
+
+大佬的代码走读
+
+![](./note_images/ceph_provisioner_code_walkthrough.png)
+
+
+
+
+
+## Rook Agent
+
+以 DaemonSet 形式部署在所有的存储机上，处理所有的存储操作，例如挂载/卸载存储卷、格式化文件系统等。  
+
+
+
+```yaml
+# 配置文件片段
+containers:
+  - args:
+    - --v=0
+    - --csi-address=/csi/csi.sock
+    - --kubelet-registration-path=/var/lib/kubelet/plugins/rook-ceph.rbd.csi.ceph.com/csi.sock
+    env:
+    - name: KUBE_NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    image: registry.cn-hangzhou.aliyuncs.com/google_containers/csi-node-driver-registrar:v2.3.0
+    imagePullPolicy: IfNotPresent
+    name: driver-registrar
+    resources: {}
+    securityContext:
+      privileged: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /csi
+      name: plugin-dir
+    - mountPath: /registration
+      name: registration-dir
+      
+....
+  - args:
+    - --nodeid=$(NODE_ID)
+    - --endpoint=$(CSI_ENDPOINT)
+    - --v=0
+    - --type=rbd
+    - --nodeserver=true
+    - --drivername=rook-ceph.rbd.csi.ceph.com
+    - --pidlimit=-1
+    - --metricsport=9090
+    - --metricspath=/metrics
+    - --enablegrpcmetrics=false
+    - --stagingpath=/var/lib/kubelet/plugins/kubernetes.io/csi/pv/
+    env:
+....
+    - name: CSI_ENDPOINT
+      value: unix:///csi/csi.sock
+    image: quay.io/cephcsi/cephcsi:v3.4.0
+    imagePullPolicy: IfNotPresent
+    name: csi-rbdplugin
+    resources: {}
+    securityContext:
+      allowPrivilegeEscalation: true
+      capabilities:
+        add:
+        - SYS_ADMIN
+      privileged: true
+
+....
+  volumes:
+  - hostPath:
+      path: /var/lib/kubelet/plugins/rook-ceph.rbd.csi.ceph.com
+      type: DirectoryOrCreate
+    name: plugin-dir
+
+```
+
+大佬代码走读
+
+```txt
+pkg/daemon/ceph/agent/agent.go
+	flexvolume.NewController(a.context,volumeAttachmentController,volumeManager)
+	rpc.Register(flexvolumeController)
+	flexvolumeServer.Start
+```
+
+
+
+## PVC 分配过程演示
+
+搭建好 rook ，启动 provisioner 等组件以后，创建一个 pvc，类型使用 `rook-ceph-block` 
+
+```yaml
+# pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rook-ceph
+spec:
+  storageClassName: rook-ceph-block
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi
+```
+
+* 创建完成后，rook provisioner 会监听 pvc 的创建，根据 pvc 中的描述，找到 storageclass 类型为 rook-ceph-block 对应的 csidriver，去生成 pv
+
+* csidriver 调用存储系统接口，将存储块创建出来，创建出 pv
+* 将 pv 和 pvc 绑定
+
+```sh
+root@master01:~# k get pv
+NAME             CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                   STORAGECLASS   REASON   AGE
+
+```
+
+将刚刚创建好的 pvc 挂载至 Pod 中使用
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: task-pv-pod
+spec:
+  volumes:
+    - name: task-pv-storage		# 类型为 PVC，挂载刚刚定义的 rook-ceph
+      persistentVolumeClaim:
+        claimName: rook-ceph
+  containers:
+    - name: task-pv-container
+      image: nginx
+      ports:
+        - containerPort: 80
+          name: "http-server"
+      volumeMounts:
+        - mountPath: "/mnt/ceph"
+          name: task-pv-storage
+
+```
+
+
+
+
+
+## Cluster
+
+针对不同的 ceph cluster ，rook 启动一组管理组件，包括：mon、mgr、osd、mds、rgw。  
+
+
+
+### Pool
+
+一个 ceph cluster 可以有多个 pool，定义副本数量，故障域等多个属性。  
+
+
+
+### Storage Class
+
+Kubernetes 用来自动创建 PV 的对象。  
+
+
+
+
+
+## 搭建 Rook 实践
+### 清理环境，添加新磁盘
+```sh
+### Resetup rook 
+rm -rf /var/lib/rook
+
+### Add a new raw device
+# Create a raw disk from virtualbox console and attach to the vm (must > 5G).
+
+### Clean env for next demo
+# delete ns rook-ceph
+for i in `kubectl api-resources | grep true | awk '{print \$1}'`; do echo $i;kubectl get $i -n clusternet-skgdp; done
+```
+
+### 拉取代码
+
+```sh
+git clone --single-branch --branch master https://github.com/rook/rook.git
+cd rook/cluster/examples/kubernetes/ceph
+```
+
+### 创建资源
+```sh
+### Create rook operator
+kubectl create -f crds.yaml -f common.yaml -f operator.yaml
+
+### Create ceph cluster
+kubectl get po -n rook-ceph
+
+#Wait for all pod to be running, and:
+kubectl create -f cluster-test.yaml
+
+### Create storage class
+kubectl get po -n rook-ceph
+
+#Wait for all pod to be running, and:
+kubectl create -f csi/rbd/storageclass-test.yaml
+```
+
+### 检查配置
+
+```sh
+### Check configmap
+k get configmap -n rook-ceph rook-ceph-operator-config -oyaml
+ROOK_CSI_ENABLE_RBD: "true"
+
+
+### Check csidriver
+k get csidriver rook-ceph.rbd.csi.ceph.com
+```
+
+Check csi plugin configuration
+
+```yaml
+    name: csi-rbdplugin
+    args:
+    - --drivername=rook-ceph.rbd.csi.ceph.com
+    - hostPath:
+      path: /var/lib/kubelet/plugins/rook-ceph.rbd.csi.ceph.com
+      type: DirectoryOrCreate
+      name: plugin-dir
+    - hostPath:
+      path: /var/lib/kubelet/plugins
+      type: Directory
+      name: plugin-mount-dir
+
+    name: driver-registrar
+    args:
+    - --csi-address=/csi/csi.sock
+    - --kubelet-registration-path=/var/lib/kubelet/plugins/rook-ceph.rbd.csi.ceph.com/csi.sock
+    - hostPath:
+      path: /var/lib/kubelet/plugins_registry/
+      type: Directory
+      name: registration-dir
+    - hostPath:
+      path: /var/lib/kubelet/plugins/rook-ceph.rbd.csi.ceph.com
+      type: DirectoryOrCreate
+      name: plugin-dir
+```
+
+```sh
+k get po csi-rbdplugin-j4s6c -n rook-ceph -oyaml
+/var/lib/kubelet/plugins/rook-ceph.rbd.csi.ceph.com
+```
+
+### Create toolbox when required
+
+```sh
+kubectl create -f cluster/examples/kubernetes/ceph/toolbox.yaml
+```
+
+### Test networkstorage
+
+pvc.yaml
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rook-ceph
+spec:
+  storageClassName: rook-ceph-block
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Mi
+```
+
+pod.yaml
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: task-pv-pod
+spec:
+  volumes:
+    - name: task-pv-storage
+      persistentVolumeClaim:
+        claimName: rook-ceph
+  containers:
+    - name: task-pv-container
+      image: nginx
+      ports:
+        - containerPort: 80
+          name: "http-server"
+      volumeMounts:
+        - mountPath: "/mnt/ceph"
+          name: task-pv-storage
+
+```
+
+```sh
+kubectl create -f pvc.yaml
+kubectl create -f pod.yaml
+```
+
+Enter pod and write some data
+
+```sh
+kubeclt exec -it task-pv-pod sh
+cd /mnt/ceph
+echo hello world > hello.log
+```
+
+Exit pod and delete the pod
+
+```sh
+kubectl create -f pod.yaml
+```
+
+Recreate the pod and check /mnt/ceph again, and you will find the file is there
+
+```sh
+kubectl delete -f pod.yaml
+kubectl create -f pod.yaml
+kubeclt exec -it task-pv-pod sh
+cd /mnt/ceph
+ls
+```
+
+### Expose dashboard
+
+```sh
+kubectl get svc rook-ceph-mgr-dashboard -n rook-ceph -oyaml>svc1.yaml
+vi svc1.yaml
+```
+
+Rename the svc and set service type as NodePort:
+
+```sh
+k create -f svc1.yaml
+kubectl -n rook-ceph get secret rook-ceph-dashboard-password -o jsonpath="{['data']['password']}" | base64 --decode && echo
+```
+
+Login to the console with `admin/<password>`.
+
+### Clean up 清理环境
+
+```sh
+cd ~/go/src/github.com/rook/cluster/examples/kubernetes/ceph
+kubectl delete -f csi/rbd/storageclass-test.yaml
+kubectl delete -f cluster-test.yaml
+kubectl delete -f crds.yaml -f common.yaml -f operator.yaml
+kubectl delete ns rook-ceph
+```
+
+编辑下面四个文件，将finalizer的值修改为null  
+例如
+```
+finalizers:
+    - ceph.rook.io/disaster-protection/
+```
+修改为
+```
+finalizers：null
+```
+```sh
+kubectl edit secret -n rook-ceph
+kubectl edit configmap -n rook-ceph
+kubectl edit cephclusters -n rook-ceph
+kubectl edit cephblockpools -n rook-ceph
+```
+执行下面循环，直至找不到任何rook关联对象。
+```
+for i in `kubectl api-resources | grep true | awk '{print \$1}'`; do echo $i;kubectl get $i -n rook-ceph; done
+
+rm -rf /var/lib/rook
+```
+
+
+
+ceph 中内容较多，排查问题无从下手，后续再遇到要补一下相关概念和操作。
+
+
+
+官方文档：
+
+https://rook.io/docs/rook/v1.7
+
+注：1.8及以上版本目录和实验中的不一致，要看官方文档操作
