@@ -136,7 +136,7 @@ data:
 
 
 
-在Pod中药挂载该CM：
+在Pod中要挂载该CM：
 
 ```yaml
 containers:

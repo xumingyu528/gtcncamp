@@ -18,7 +18,7 @@
 * [Etcd](../module05_etcd/M05_note.md)
 * [API Server](../module06_apiserver/M06_note.md)
   * 代码走读部分未深入理解
-* [Control plane，未整理](../module07_control-plane/M07_note.md)
+* [Control plane](../module07_control-plane/M07_note.md)
 * [服务生命周期](../module08_lifecycle_service/M08_note.md)
   * netfilter、iptables原理要复习
   * ingress 案例再消化下
@@ -49,5 +49,6 @@
 
 最后记录复习过程中，听不明白或者薄弱的地方，后续针对这些方面加强补足，将这些内容补充到上面的学习目标：
 * linux内存管理中堆、栈、用户空间、内核空间、BSS、Data、Text等，进程切换开销，操作系统基础不扎实
+* TCP、HTTP 报文格式要理解并记住，网络协议需要捡一捡，netfilter 框架、iptables、ipvs等需要熟悉
 * 
 
