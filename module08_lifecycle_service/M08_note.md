@@ -1124,9 +1124,10 @@ spec:
 
 
 # kube-proxy 组件
-每台机器都运行一个 kube-proxy 服务，它监听 API Server 中 service 和 endpoint 的变化情况，并通过 iptables 等来为服务配置负载均衡（仅支持 TCP 和 UDP）  
+每台机器都运行一个 kube-proxy 服务，它监听 API Server 中 service 和 endpoint 的变化情况，并通过 iptables 等模式来为服务配置负载均衡（仅支持 TCP 和 UDP）  
 kube-proxy 可以直接运行在物理机上，也可以以 static pod 或者 DaemonSet 的方式运行。  
 kube-proxy 当前支持以下几种实现：
+
 * userspace：最早的负载均衡方案，监听一个端口，所有服务通过 iptables 转发到这个端口，然后在其内部负载到实际的 Pod
   * 效率低，有明显的性能瓶颈
 * iptables：基于 iptables 实现 service 负载均衡，主要是服务多的时候产生太多的 iptables 规则，非增量式更新会引入一定的时延，大规模情况下有明显的性能瓶颈
@@ -1165,21 +1166,52 @@ kube-proxy 当前支持以下几种实现：
 ![](./note_images/kube-proxy_principle.png)
 
 * watch api-server，监听到与节点或Pod相关的IP映射
-* 调用iptables、ipvs等配置规则，实现功能
+* 调用iptables、ipvs等配置规则，实现功能，例如将 Cluster IP 转换为后端真实 Pod IP
 
 
 
-## Kubernetes iptables 原理
+### Kubernetes iptables 原理
 
 ![](./note_images/k8s_iptables_rule.png)
 
-## IPVS
+### IPVS
 
 ![](./note_images/ipvs.png)
 
-### IPVS hook & core func
+IPVS 与 iptables 最主要的区别：
+
+* iptables 可以在 PREROUTING 做 HOOK，在路由判决之前将目标地址替换
+* IPVS 只能在 LOCAL_IN 和 LOCAL_OUT 两个 HOOK 点做，需要绑定一个网卡设备上
+
+
+
+
+
+#### IPVS hook & core func
 
 ![](./note_images/ipvs_hook_func.png)
+
+
+
+###  kube-proxy 工作模式从 iptables 切换为 IPVS
+
+编辑 kube-proxy 的 configmap ，将 mode 值修改为 IPVS，修改后重启 kube-proxy 的 Pod
+
+```sh
+# kubectl edit configmap kube-proxy -n kube-system 
+....
+ config.conf:
+ 	....
+ 	mode: "ipvs"
+....
+
+# 删除之前运行的 kube-proxy pod 实例，使之生效
+kubectl delete pod kube-proxy-7kwq7 -n kube-system
+# 查看 ipvs
+ipvsadm -L
+```
+
+
 
 
 
@@ -1193,17 +1225,29 @@ CoreDNS 包含一个内存态 DNS，以及与其他 controller 类似的控制�
 
 CoreDNS 的实现原理是，控制器监听 Service 和 Endpoint 的变化并配置 DNS，客户端 Pod 在进行域名解析时，从 CoreDNS 中查询服务对应的地址记录。
 
+![](./note_images/coredns.png)
+
+* coreDNS 启动时，没有任何记录，controller 会从集群中读取 Service、Endpoint、Pod 的信息，把这些对象的映射关系转换为 DNS 配置，例如 `svc1.ns1.svc.clusterdomain:VIP1` 是 `服务名.namespace名.svc.集群名:集群IP` 这种模式构建。    
+
+* Pod 中有一个属性 DNS Policy，默认为 ClusterFirst，Pod 启动后会在 /etc/resolv.conf 中写入记录，Pod 就可以通过 CoreDNS 发现集群中相关服务
+
 
 
 ## 不同类型服务的 DNS 记录
 
 * 普通 Service
-* Headless Service
+  * ClusterIP、NodePort、LoadBalancer 类型的 Service 都拥有 APIServer 分配的 ClusterIP，CoreDNS 会为这些 Service 创建 FQDN（Full Qualified Domain Name) 格式为 `$svcname.$namespace.svc.$clusterdomain:clusterIP` 的 A 记录及 PTR 记录，并为端口创建 SRV 记录。  
+*  Headless Service
+  * 显式的在 Spec 中指定 ClusterIP 为 None 的 Service，对于这类 Service，APIServer 不会为其分配 ClusterIP。CoreDNS 为此类 Service 创建多条 A 记录，并且目标为每个就绪的 PodIP。
+  * 每个 Pod 会拥有一个 FQDN 格式为 `$podname.$svcname.$namespace.svc.$clusterdomain` 的 A 记录指向 PodIP。
 * ExternalName Service
+  * 用来引用一个已经存在的域名，CoreDNS 会为该 Service 创建一个 Cname 记录指向目标域名。
 
 
 
 ## Kubernetes 中的 DNS 解析
+
+
 
 * Kubernetes Pod 有一个与 DNS 策略相关的属性 DNSPolicy，默认值是 ClusterFirst
 
@@ -1212,7 +1256,7 @@ CoreDNS 的实现原理是，控制器监听 Service 和 Endpoint 的变化并�
   * ```bash
     $ cat /etc/resolv.conf
     search ns1.svc.cluster.local svc.cluster.local cluster.local
-    nameserver 192.168.0.100
+    nameserver 192.168.0.100		// 集群域名服务器地址
     options ndots:3		//与第一条配合，域名的长度在几个以内会匹配search 中的后缀，以实现短域名访问服务
     ```
 
@@ -1220,9 +1264,91 @@ CoreDNS 的实现原理是，控制器监听 Service 和 Endpoint 的变化并�
 
 
 
+示例：
+
+启动一个 nginx 镜像 Pod，配置 Service 指向该 Pod，使用 exec 进入 Pod 中 curl 的 Service 名称，可以直接访问到
+
+```sh
+# 进入 Pod 
+k exec -it nginx-deployment-57586646f7-kfck4 -- bash
+# curl svc 名
+root@nginx-deployment-57586646f7-kfck4:/# curl httpserver-svc
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+<style>
+....
+# 全名称访问
+root@nginx-deployment-57586646f7-kfck4:/# curl httpserver-svc.default.svc.cluster.local
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+<style>
+....
+root@nginx-deployment-57586646f7-kfck4:/# 
+
+```
+
+
+
+### 环境变量注入
+
+```sh
+# 查看 Pod 中 env 环境变量
+root@nginx-deployment-57586646f7-kfck4:/# env
+KUBERNETES_SERVICE_PORT_HTTPS=443
+KUBERNETES_SERVICE_PORT=443
+HOSTNAME=nginx-deployment-57586646f7-kfck4
+PWD=/
+PKG_RELEASE=1~bullseye
+HOME=/root
+KUBERNETES_PORT_443_TCP=tcp://10.96.0.1:443
+NJS_VERSION=0.7.3
+TERM=xterm
+SHLVL=1
+KUBERNETES_PORT_443_TCP_PROTO=tcp
+KUBERNETES_PORT_443_TCP_ADDR=10.96.0.1
+KUBERNETES_SERVICE_HOST=10.96.0.1
+KUBERNETES_PORT=tcp://10.96.0.1:443
+KUBERNETES_PORT_443_TCP_PORT=443
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+NGINX_VERSION=1.21.6
+_=/usr/bin/env
+root@nginx-deployment-57586646f7-kfck4:/# 
+
+```
+
+
+
+```sh
+# 查看 Pod 的 spec 属性中有一条 enableServiceLinks
+kubectl get pod nginx -o yaml
+....
+  enableServiceLinks: true
+....
+# 开启了此属性的 Pod 启动时，Service 会以环境变量的形式注入到 Pod 中
+```
+
+* 当集群中的 Service 数量过多，通过 env 注入的形式，可能会导致参数过长，进而引起 Pod 创建失败
+* 因此社区引入了 enableServiceLinks 的选项，可以将之设置为 false，关闭 Pod 启动时 env 注入 Service 信息
+
 
 
 ## 自定义 DNSPolicy
+
+可以将 spec 中的 dnsPolicy 设置为 None，在 dnsConfig 中指定自己的 DNS 服务器
+
+
+
+## 实践
+
+Ebay 有一些服务对集群内外都提供服务，内部由 CoreDNS 解析，外部建立了一个企业 DNS Controller ，将集群内的服务同样加入企业 DNS 中解析（A/PTR/SRV等），这样集群内部通过 CoreDNS ，外部通过企业 DNS ，集群内外的标识统一。
+
+*  针对 headless service，PodIP 可全局路由的情况下，按需创建 DNS records
+* 创建过多 Headless service 的 DNS 记录，会冲击企业 DNS
+* loadbalance 类型服务，内部指向 clusterIP，外部指向 loadbalance IP
 
 
 
@@ -1234,11 +1360,46 @@ CoreDNS 的实现原理是，控制器监听 Service 和 Endpoint 的变化并�
 
 ## 四层负载和七层负载
 
+**基于 L4 的服务**
 
+* 基于 iptables/ipvs 的分布式四层负载均衡技术
+* 多种 Load Balancer Provider 提供与企业现有 ELB  整合
+* kube-proxy 基于 iptables rules 为 kubernetes 形成全局统一的 distributed load balancer
+* kube-proxy 是一种 mesh，internal Client ，无论通过 podip 、nodeip 还是 LB VIP 都经由 kube-proxy 跳转至 Pod
+* 属于 Kubernetes core
+
+
+
+**基于 L7 的 Ingress**
+
+* 基于七层应用层，提供更多功能
+* TLS termination
+* L7 path forwarding
+* URL/http header rewrite
+* 与采用 7 层软件紧密相关
 
 
 
 ## Service 中的 Ingress 的对比
+
+**基于 L4 的服务**
+
+* 每个应用独占 ELB
+* 为每个服务动态创建 DNS记录，频繁更新
+* 支持 TCP 和 UDP，业务部门需要启动 HTTPS 服务，自己管理证书
+
+![](./note_images/l4_service.png)
+
+**基于 L7 的 Ingress**
+
+* 多个应用共享 ELB，节省资源
+* 多个应用共享一个 Domain，可以采用静态 DNS 配置
+* TLS termination 发生在 Ingress 层，可以集中管理证书
+* 但网络变的更复杂，更多 hop
+
+![](./note_images/l7_service_ingress.png)
+
+
 
 
 
@@ -1256,6 +1417,10 @@ CoreDNS 的实现原理是，控制器监听 Service 和 Endpoint 的变化并�
   * 负载均衡配置
   * 边缘路由配置
   * DNS 配置
+
+![](./note_images/ingress_config.png)
+
+Ingress 本身比较简单，有一些复杂的7层需求仍然无法满足，例如 rewrite header、修改请求路径转发到后端等。
 
 
 

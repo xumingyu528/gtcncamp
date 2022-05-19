@@ -1,5 +1,11 @@
 [toc]
 
+# 镜像仓库
+
+
+
+# 镜像安全
+
 
 
 
@@ -12,13 +18,27 @@
 
 
 
-# Tekton
+# 自动化流水线
+## 基于GitHub Action
+
+
+
+## 基于 Jenkins
 
 
 
 
 
-# Argo CD
+
+
+
+## 基于声明式 API ：Tekton
+
+
+
+
+
+# 持续交付 Argo CD
 
 Argo CD 是用于 Kubernetes 的声明性 GitOps 连续交付工具。  
 
