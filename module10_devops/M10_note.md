@@ -827,9 +827,36 @@ Argo CD 是用于 Kubernetes 的声明性 GitOps 连续交付工具。
 * Argo CD 报告并可视化差异，同时提供了自动或手动将实时状态同步回所需目标状态的功能
 * 在 Git 存储库中堆所需目标状态所做的任何修改都可以自动应用并反映在指定的目标环境中
 
+![](./note_images/ArgoCD_architecture.png)
+
+
+
+
+
+
+
 
 
 ### 安装
+
+```sh
+# 创建 ns
+kubectl create namespace argocd
+# 在线安装
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+```
+
+再 secret 中可以查看到生成的 base64 加密密码，默认用户名为 admin
+
+```sh
+k get secret -n argocd argocd-initial-admin-secret -oyaml
+```
+
+将 argocd-server 的 service 修改为 nodeport 类型然后访问  
+
+在系统中创建 application，repository 可以使用 `https://github.com/cncamp/test.git` 测试   
+
+创建完成后可以在集群中手动修改刚才创建的应用资源，在 argocd 中可以看到变化，点击 sync 可以强制同步为设定的目标状态。  
 
 
 
@@ -848,9 +875,61 @@ Argo CD 是用于 Kubernetes 的声明性 GitOps 连续交付工具。
 
 # 日志收集分析
 
+## 日志系统价值
+
+* 分布式系统的日志查看比较复杂，因为多节点的系统，要先找到正确的节点，才能看到想看的日志。日志系统把整个集群的日志汇总在一起，方便查看
+* 因为节点上的日志滚动机制，如果有应用打印太多日志，没有日志系统，会导致关键日志丢失
+* 日志系统的重要意义在于解决，节点出错导致不可访问，进而丢失日志的情况
 
 
 
+## 常用数据系统构建模式
+
+![](./note_images/data_system_structure.png)
+
+### 数据收集
+
+通常分为 Push 、Pull 方式
+
+* Push：业务系统负责日志输出，同时需要发送日志到指定位置
+* Pull：业务系统负责日志输出，日志系统负责拉取日志
+
+
+
+### 预处理
+
+* 去重：去除重复及无意义内容
+* 塑形：例如格式化标准日志模式
+* Enrich-ment：补充信息
+
+
+
+### 存储
+
+将日志信息存储到对应数据库或文件系统中
+
+* TSDB
+* Hadoop
+
+
+
+### 查询
+
+通过过滤条件查询特定日志，时间、名称、标签 ....
+
+
+
+### 告警
+
+根据设定的阈值触发告警
+
+
+
+### 分析
+
+* 奇异点分析
+* 统计分析
+* 预测分析
 
 
 
@@ -858,6 +937,32 @@ Argo CD 是用于 Kubernetes 的声明性 GitOps 连续交付工具。
 
 ## Loki
 
+Grafana Loki 是可以组成功能齐全的日志记录堆栈的一组组件
+
+* 与其它日志记录系统不同，Loki 是基于仅索引有关日志的元数据的想发而构建的：标签
+* 日志数据本身被压缩并存储在对象存储（例如 S3 或 GCS）中的块中，甚至存储在文件系统本地
+* 小索引和高度压缩的块简化了操作，并大大降低了 Loki 的成本
+
+
+
+### Loki-stack 子系统
+
+![](./note_images/loki_base_k8s.png)
+
+
+
+* Promtail
+  * 将容器日志发送到 Loki 或 Grafana 服务上的日志收集工具
+  * 发现采集目标及给日志流加上 Label，然后发送给 Loki
+  * Promtail 的服务发现是基于 Prometheus 的服务发现机制实现的，可以查看 configmap loki-promtail 了解细节
+* Loki
+  * Loki 是可以水平扩展、高可用以及支持多租户的日志聚合系统
+  * 使用和 Prometheus 相同的服务发现机制，将标签添加到日志流中而不是构建全文索引
+  * Promtail 接收到的日志和应用的 metrics 指标具有相同的标签集
+* Grafana
+  * 用于监控和可视化观测的开源平台，支持丰富的数据源
+  * 在 Loki 技术栈中它专门用来展示来自 Prometheus 和 Loki 等数据源的时间序列数据
+  * 允许进行查询、可视化、报警等操作，可以用于创建、探索和共享 Dashboard
 
 
 
@@ -865,8 +970,45 @@ Argo CD 是用于 Kubernetes 的声明性 GitOps 连续交付工具。
 
 
 
+### Loki 架构
+
+![](./note_images/loki_architecture.png)
 
 
+
+### Loki 组件
+
+* Distributor（分配器）
+  * 负责处理客户端写入的日志
+  * 分配器接收到日志数据，把它们分成若干批次，并将它们并行地发送到多个采集器去
+  * 通过 gRPC 和采集器进行通信
+  * 无状态的，基于一致性哈希，可以根据实际需求对其进行扩缩容
+* Ingester（采集器）
+  * 负责将日志数据写入长期存储的后端（DynamoDB、S3、Cassandra 等等）
+  * 校验采集的日志是否乱序
+  * 验证接收到的日志行是按照时间戳递增的顺序接收的，否则日志行将拒绝并返回错误
+* Querier（查询器）
+  * 负责处理 LogQL 查询语句来评估存储在长期存储中的日志数据
+
+
+
+
+
+### 安装 Loki stack
+
+基于 helm
+
+
+
+
+
+### 生产中问题分享
+
+* 利用率低
+  * 日志大多数是给管理员做问题分析的，但管理员大多是登录到节点或者 Pod 里分析，日志分析只是整个分析过程中的一部分，所以很多时候顺手就看了日志
+* FileBeats 出现过锁住文件系统， docker container 无法删除的情况
+* 与监控系统相比，日志系统的重要度稍低
+* 出现过多次因为日志滚动太快使得日志收集占用太大网络带宽的情况
 
 
 
@@ -874,12 +1016,46 @@ Argo CD 是用于 Kubernetes 的声明性 GitOps 连续交付工具。
 
 # 监控系统
 
+### 作用
+
+* 要对自己的系统运行状态了如指掌，有问题及时发现，而不是让用户先发现
+* 需要知道服务运行情况，例如 slowsql 处于什么水平，平均响应时间超过 200ms 的占比有百分之多少
+* 需要监控工具来提醒我们服务出现了故障
+* 通过监控服务决定扩缩容
+  * 机器普遍负载不高，是否可以考虑缩减规模或配置
+  * 如果数据库资源或链接长期在高位水平，可以考虑拆库处理，优化架构等
+* 内部统制，对安全比较敏感的行业，银行、证券等
+* 分析安全事件，识别类似攻击等
+
+
+
+### 目的
+
+* 减少宕机时间
+* 扩展和性能管理
+* 资源计划
+* 识别异常事件
+* 故障排除、分析
+
 
 
 ## Prometheus
 
 
 
+![](./note_images/monitor_system_in_k8s.png)
+
+* Prometheus Server
+  * Retrieval：收集指标信息
+  * Storage：存储
+  * PromQL：用于查询指标数据
+* Pushgateway：对于短生命周期的 Job 类容器，可以将日志汇聚到 Pushgateway，再进行拉取
+* 用户接口：Web UI、PromeDash、Grafana、API clients 等多种方式
+* Alertmanager：告警，可以通过 pagerduty、email、SMS 等方式
+
+
+
+Kubernetes 中每个节点的 kubelet（集成了 cAdvisor）会收集当前节点 host 上所有信息，包括 cpu、内存、磁盘等。Prometheus 会 pull 这些信息，给每个节点打上标签来区分不同的节点。  
 
 
 
@@ -887,6 +1063,25 @@ Argo CD 是用于 Kubernetes 的声明性 GitOps 连续交付工具。
 
 
 
+### Prometheus 中的指标类型
+
+* Counter（计数器）：代表一种样本数据单调递增的指标，只增不减，除非监控系统发生了重置
+* Gauge（仪表盘）：代表一种样本数据可以任意变化的指标，可增可减
+* Histogram（直方图）
+  * 一段时间范围内对数据进行采样（通常是请求持续时间或响应大小等），并将其计入可配置的存储桶（bucket）中，后续可通过指定区间筛选样本，也可以统计样本总数，最后一般将数据展示为直方图
+  * 样本的值分布在 bucket 中的数量，命名为 `<basename>_bucket{le= "<上边界"}`
+  * 所有样本值的大小总和，命名为`<basename>_sum`
+  * 样本总数，命名为`<basename>_count`，值和 `<basename>_bucket{le= "+Inf"}`相同
+* Summary（摘要）
+  * 与 Histogram 类似，用于表示一段时间内的数据采样结果（通常是请求持续时间或响应大小然后展示出来），而不是通过区间来计算
+  * 它们都包含了 `<basename>_sum` 和 `<basename>_count` 指标
+  * Histogram 需要通过 `<basename>_bucket` 来计算分位数，而 Summary 则直接存储了分位数的值
+
+
+
+
+
+### Prometheus Query Language
 
 
 
@@ -894,11 +1089,31 @@ Argo CD 是用于 Kubernetes 的声明性 GitOps 连续交付工具。
 
 
 
+### 告警
+
+Prometheus 配置文件 prometheus.yaml 中添加  
+
+```yml
+rule_files:
+  - /etc/prometheus/rules/*.rules
+```
+
+在目录 /etc/prometheus/rules/ 下创建告警文件 ，配置具体告警规则
 
 
 
+### 构建支持生产的监控系统
+
+* Metrics ：收集数据
+* Alert：创建告警规则
+* Assertion：以一定时间间隔，模拟客户行为，操作 k8s 对象进行断言验证，如果不成功则按照严重程度告警
 
 
 
+### 生产环境经验分享
 
-
+* Prometheus 需要大内存和存储
+  * 最初 Prometheus 经常发生 OOM kill
+  * 在提高指定的资源以后，如果发生 crash 或者重启，Prometheus 需要 30分钟以上的时间来读取数据进行初始化
+* Prometheus 是运行生产系统过程中最重要的模块
+  * 如果 Prometheus 宕机，则没有任何数据和告警，管理员两眼一抹黑
