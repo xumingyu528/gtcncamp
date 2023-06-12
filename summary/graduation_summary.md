@@ -11,6 +11,7 @@
 ## 课程的笔记，未完成的内容整理
 * Go 语言
   * [模块一](../module01_golang/M01_note.md)，基础部分，基本可以跟下来
+    * 需要多练习，多敲代码，否则时间长就会忘记
   * [模块二，未完成](../module02_golang/M02_note.md)，进程管理、内存管理、GMP模型部分需要经常回顾
     * [这里有一个作业](../module02_golang/httpserver/main.go)，优雅启动和优雅终止后面写程序时需要多考虑下
 * [Docker](../module03_docker/M03_note.md)，DockerFile 分阶段构建需要再整理下
@@ -22,10 +23,10 @@
 * [服务生命周期](../module08_lifecycle_service/M08_note.md)
   * netfilter、iptables原理要复习
   * ingress 案例再消化下
-* [生产化集群，从这里到最后的笔记都未整理 !=.= ](../module09_prod_cluster_manage/M09_note.md)
+* [生产化集群](../module09_prod_cluster_manage/M09_note.md)
 * [DevOps](../module10_devops/M10_note.md)
   * CI/CD、Git、jenkins、prometheus、loki
-* [应用迁移](../module11_app_migration/M11_note.md)
+* [应用迁移，从这里到最后的笔记都未整理 !=.=](../module11_app_migration/M11_note.md)
 * [Istio](../module12_istio/M12_note.md)
 * [多集群](../module13_multi-cluster/M13_note.md)
 * [安全](../module14_security/M14_note.md)

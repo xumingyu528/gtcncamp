@@ -12,10 +12,6 @@
 
 
 
-
-
-
-
 ## 优劣势对比
 
 |          | 分层架构                                                     | 微服务                                                       |
@@ -236,6 +232,8 @@ docker ps
 
 
 
+
+
 ### 镜像生成
 
 * Dockerfile
@@ -267,6 +265,25 @@ docker ps
 * 可配额：依赖于Cgroups，控制资源
 
 
+
+[极客时间张磊老师的示例：](https://time.geekbang.org/column/article/14642)
+
+```bash
+# 安装完成 docker 以后，可以直接运行 run 命令启动需要的容器，例如下面的 busybox，-it 是以交互方式进入容器，交互
+root@VM-12-2-ubuntu:/sys/fs/cgroup# docker run -it busybox /bin/sh
+Unable to find image 'busybox:latest' locally
+latest: Pulling from library/busybox
+22b70bddd3ac: Pull complete 
+Digest: sha256:6bdd92bf5240be1b5f3bf71324f5e371fe59f0e153b27fa1f1620f78ba16963c
+Status: Downloaded newer image for busybox:latest
+/ # ps
+PID   USER     TIME  COMMAND
+    1 root      0:00 /bin/sh
+    7 root      0:00 ps
+/ # 
+```
+
+上面的示例可以看到，进入容器后我们在启动时指定的 /bin/sh 变成了 1号进程，容器被隔离在了与宿主机不同的世界中，这就是通过  Namespace 实现的
 
 
 
@@ -315,12 +332,12 @@ docker ps
 * 查看某进程的namespace：`ls -la /proc/<pid>/ns/`
 * 进入某 namespace 运行命令：`nsenter -t <pid> -n ip addr`
 
-
+[左耳朵耗子（陈皓）大佬的文章，关于 Namespace 的介绍](https://coolshell.cn/articles/17010.html)
 
 #### 示例
 
 ```
-在新network namespace执行sleep指令：
+在新 network namespace 执行sleep指令：
 unshare -fn sleep 60
 
 另起终端查看进程信息
@@ -354,6 +371,55 @@ root     3749013 3749012  0 11:59 pts/1    00:00:00 sleep 60
 * 不同资源的具体管理工作由相应的Cgroup 子系统（Subsystem）来实现
 * 针对不同类型的资源限制，只要将限制策略在不同的子系统上进行关联即可
 * Cgroups 在不同的系统资源管理子系统中以层级树（Hierarchy）的方式来组织管理：每个Cgroup 都可以包含其它的子 Cgroup，因此子 Cgroup 能使用的资源除了受本 Cgroup 配置的资源参数限制，还受到父 Cgroup 设置的资源限制
+
+
+
+以下参考了[ 极客时间张磊老师的专栏示例 ](https://time.geekbang.org/column/article/14653)
+
+在 linux 的 /sys/fs/cgroup 目录下有很多子目录，如 CPU、CPUSET、MEMORY 等，这些是当前机器 Cgroups 可以进行资源限制的种类，在具体对应资源种类目录下，可以看到具体的限制方法，例如 CPU 目录中：
+
+```bash
+root@VM-12-2-ubuntu:/sys/fs/cgroup/cpu# ls
+cgroup.clone_children  cpuacct.usage_all         cpuacct.usage_percpu_user  cpu.cfs_period_us  cpu.stat           tasks
+cgroup.procs           cpuacct.stat   cpuacct.usage_percpu      cpuacct.usage_sys          cpu.cfs_quota_us   notify_on_release 
+cgroup.sane_behavior   cpuacct.usage  cpuacct.usage_percpu_sys  cpuacct.usage_user         cpu.shares         release_agent
+
+```
+
+其中 cpu.cfs_period_us 、cpu.cfs_quota_us 可以组合限制在 cfs_period 中指定的时间周期内（默认为 100000 us，及100 ms），某个进程可以被分配到的 CPU 时间（默认为 -1，不限制）。
+
+示例：
+
+```bash
+#在 /sys/fs/cgroup/cpu 目录中创建一个 container 目录（名称可以随意）
+root@VM-12-2-ubuntu:/sys/fs/cgroup/cpu# mkdir container
+root@VM-12-2-ubuntu:/sys/fs/cgroup/cpu# ls container/
+cgroup.clone_children  cpuacct.stat   cpuacct.usage_all     cpuacct.usage_percpu_sys   cpuacct.usage_sys   cpu.cfs_period_us  cpu.shares  cpu.uclamp.max  notify_on_release
+cgroup.procs           cpuacct.usage  cpuacct.usage_percpu  cpuacct.usage_percpu_user  cpuacct.usage_user  cpu.cfs_quota_us   cpu.stat    cpu.uclamp.min  tasks
+# 在shell中执行一个死循环后台运行
+root@VM-12-2-ubuntu:/sys/fs/cgroup/cpu# while : ; do : ; done &
+[1] 2375069
+# 此时通过 top 命令可以看到该进程可以占用到 100% 的CPU
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND                                     
+2375069 root      20   0    8304   1728      0 R 100.0   0.0   0:58.43 bash 
+# 进入container 目录，查看 cfs_quota 和 cfs_period 文件
+root@VM-12-2-ubuntu:/sys/fs/cgroup/cpu# cd container/
+# 默认不限制
+root@VM-12-2-ubuntu:/sys/fs/cgroup/cpu/container# cat cpu.cfs_quota_us 
+-1
+# 周期为 100ms
+root@VM-12-2-ubuntu:/sys/fs/cgroup/cpu/container# cat cpu.cfs_period_us 
+100000
+# 向 cfs_quota 文件中写入限制为 20000 us，即 100ms CPU时钟周期内限制占用时间为 20ms
+root@VM-12-2-ubuntu:/sys/fs/cgroup/cpu/container# echo 20000 > cpu.cfs_quota_us 
+root@VM-12-2-ubuntu:/sys/fs/cgroup/cpu/container# cat cpu.cfs_quota_us 
+20000
+# 向 tasks 文件中写入刚后台运行的进程 pid
+root@VM-12-2-ubuntu:/sys/fs/cgroup/cpu/container# echo 2375069 > tasks
+# 通过 top 命令查看进程运行时的CPU被限制到了 20%
+	PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+2375069 root      20   0    8304   2292    540 R  19.9   0.1  10:51.10 -bash       
+```
 
 
 

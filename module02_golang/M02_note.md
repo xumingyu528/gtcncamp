@@ -331,8 +331,25 @@ func (q *Type) Get() (item interface{}, shutdown bool) {
   * 创建线程时，task_struct结构体的mm、fs、files、signal等资源与父进程一样，是共享的
   
 
+![](./note_images/process_thread_create.png)
+
+
+
+
+
 
 ## Linux 进程的内存使用
+
+![](./note_images/mem_management.png)
+
+Linux 管理内存通过页式管理方式，将物理内存大小切分为不同大小的页，通过`getconf PAGE_SIZE` 可以查看
+
+```sh
+root@VM-12-12-ubuntu:~# getconf PAGE_SIZE
+4096
+```
+
+
 
 
 
